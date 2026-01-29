@@ -14,7 +14,7 @@ public class ViewerReceiver : MonoBehaviour
 
     [Header("Configurações de Memória")]
     [Range(100, 3000)]
-    public int maximoPontos = 100000; // Limite de triângulos na tela
+    public int maximoPontos = 1000000; // Limite de triângulos na tela
 
     [Tooltip("Distância mínima em metros entre dois pontos (Filtro de Grade)")]
     public float distanciaMinima = 0.05f;
