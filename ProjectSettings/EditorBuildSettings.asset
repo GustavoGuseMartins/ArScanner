@@ -9,8 +9,14 @@ EditorBuildSettings:
     path: Assets/Scenes/SampleScene.unity
     guid: 99c9720ab356a0642a771bea13969a05
   - enabled: 1
+    path: Assets/Scenes/MenuViewer.unity
+    guid: 6a86678749b37be48a86079c69a7195e
+  - enabled: 1
     path: Assets/Scenes/CenaViewer.unity
     guid: 82a5891f5f3e3354eb37dfd9a7b83992
+  - enabled: 0
+    path: Assets/Scenes/MenuScanner.unity
+    guid: dfe6d08e52a267c44a2b43ebcbd263a9
   - enabled: 0
     path: Assets/Scenes/CenaScanner.unity
     guid: 3bd1b36702e2f54458df9d35bf844855

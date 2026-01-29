@@ -34,6 +34,10 @@ public class ScannerSender : MonoBehaviour
         Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
         udpClient = new UdpClient();
+        if (!string.IsNullOrEmpty(GlobalData.IpAlvo))
+        {
+            ipDoReceptor = GlobalData.IpAlvo;
+        }
     }
 
     void Update()
