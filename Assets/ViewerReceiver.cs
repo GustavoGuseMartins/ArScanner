@@ -6,15 +6,19 @@ using System.Threading;
 using System.Globalization;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using UnityEngine.XR.ARFoundation; // <--- NECESSÁRIO
 
 public class ViewerReceiver : MonoBehaviour
 {
     [Header("Visualização")]
-    public GameObject pontoPrefab; // Arraste seu Prefab de Triângulo/Quad aqui
+    public GameObject pontoPrefab;
+
+    [Header("AR Core")]
+    public ARAnchorManager anchorManager; // <--- ARRASTE O MANAGER AQUI NO INSPECTOR
 
     [Header("Configurações de Memória")]
-    [Range(100, 3000)]
-    public int maximoPontos = 1000000; // Limite de triângulos na tela
+    [Range(100, 300000)] // Aumentei um pouco o range do slider
+    public int maximoPontos = 100000;
 
     [Tooltip("Distância mínima em metros entre dois pontos (Filtro de Grade)")]
     public float distanciaMinima = 0.05f;
@@ -27,20 +31,46 @@ public class ViewerReceiver : MonoBehaviour
     private Thread threadRecebimento;
     private ConcurrentQueue<Pose> filaDeEntrada = new ConcurrentQueue<Pose>();
 
-    // Estruturas do Sistema de Grade (Voxel Grid)
+    // Estruturas do Sistema de Grade
     struct PontoAtivo { public GameObject obj; public Vector3Int gradeKey; }
     private Queue<PontoAtivo> pontosVivos = new Queue<PontoAtivo>();
     private HashSet<Vector3Int> gradeOcupada = new HashSet<Vector3Int>();
 
+    // Variável para segurar o mundo no lugar
+    private Transform mundoAncora; // <--- O PAI DE TODOS OS PONTOS
+
     void Start()
     {
-        // Impede a tela de desligar enquanto usa o app
         Screen.sleepTimeout = SleepTimeout.NeverSleep;
+
+        // --- CRIAÇÃO DA ÂNCORA (O PREGO NO MUNDO) ---
+        CriarAncoraRaiz();
 
         udpServer = new UdpClient(porta);
         threadRecebimento = new Thread(ReceberDados);
         threadRecebimento.IsBackground = true;
         threadRecebimento.Start();
+    }
+
+    void CriarAncoraRaiz()
+    {
+        // Cria um objeto vazio no 0,0,0 (onde o S9 iniciou o app)
+        GameObject raiz = new GameObject("RaizDoMundoAR");
+        raiz.transform.position = Vector3.zero;
+        raiz.transform.rotation = Quaternion.identity;
+
+        // Tenta adicionar o componente ARAnchor via script
+        // Isso diz ao ARCore: "Mantenha este objeto fixo no mundo físico, custe o que custar"
+        if (anchorManager != null)
+        {
+            raiz.AddComponent<ARAnchor>();
+        }
+        else
+        {
+            Debug.LogWarning("ARAnchorManager não foi definido no Inspector!");
+        }
+
+        mundoAncora = raiz.transform;
     }
 
     void Update()
@@ -50,33 +80,39 @@ public class ViewerReceiver : MonoBehaviour
 
     void ProcessarFila()
     {
-        // Enquanto houver dados chegando da rede, processa na Main Thread
         while (filaDeEntrada.TryDequeue(out Pose dadosPonto))
         {
-            // 1. Calcula a chave da grade (Voxel)
             Vector3Int chaveGrade = new Vector3Int(
                 Mathf.RoundToInt(dadosPonto.position.x / distanciaMinima),
                 Mathf.RoundToInt(dadosPonto.position.y / distanciaMinima),
                 Mathf.RoundToInt(dadosPonto.position.z / distanciaMinima)
             );
 
-            // 2. Filtro: Se já existe algo nesta célula, ignora
             if (gradeOcupada.Contains(chaveGrade)) continue;
 
-            // 3. Instancia o objeto visual
-            // Importante: Usa a ROTAÇÃO que veio do S23 para alinhar à superfície
-            GameObject novoObj = Instantiate(pontoPrefab, dadosPonto.position, dadosPonto.rotation);
+            // --- MUDANÇA CRUCIAL AQUI ---
 
-            // Ajuste de escala (opcional: ajuste conforme o tamanho do seu quad)
+            // 1. Instancia o objeto (sem posição ainda)
+            GameObject novoObj = Instantiate(pontoPrefab);
+
+            // 2. Define o PAI como sendo a Âncora
+            novoObj.transform.SetParent(mundoAncora, false);
+
+            // 3. Define a posição LOCAL (relativa à âncora)
+            // Isso garante que se a âncora corrigir o drift, o ponto vem junto
+            novoObj.transform.localPosition = dadosPonto.position;
+            novoObj.transform.localRotation = dadosPonto.rotation;
+
+            // Ajuste de escala
             float tamanho = 0.08f;
             novoObj.transform.localScale = new Vector3(tamanho, tamanho, 1f);
 
-            // 4. Registra no sistema de gerenciamento
+            // -----------------------------
+
             PontoAtivo novoPonto = new PontoAtivo { obj = novoObj, gradeKey = chaveGrade };
             pontosVivos.Enqueue(novoPonto);
             gradeOcupada.Add(chaveGrade);
 
-            // 5. Verifica limite máximo (FIFO)
             if (pontosVivos.Count > maximoPontos)
             {
                 RemoverPontoMaisAntigo();
@@ -94,7 +130,6 @@ public class ViewerReceiver : MonoBehaviour
         }
     }
 
-    // Thread separada para ler UDP sem travar o jogo
     void ReceberDados()
     {
         while (true)
@@ -113,7 +148,6 @@ public class ViewerReceiver : MonoBehaviour
 
                     string[] v = pontoTexto.Split(',');
 
-                    // Valida se temos os 7 valores (Posição + Rotação)
                     if (v.Length >= 7)
                     {
                         Vector3 pos = new Vector3(
@@ -135,7 +169,7 @@ public class ViewerReceiver : MonoBehaviour
             }
             catch
             {
-                // Silencia erros de timeout ou pacote corrompido para manter o loop vivo
+                // Silencia erros
             }
         }
     }

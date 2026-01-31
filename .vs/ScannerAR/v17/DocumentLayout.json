@@ -11,12 +11,12 @@
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Assets\\ScannerSender.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\aaata\\ScannerAR\\Assets\\MenuViewer.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Assets\\MenuViewer.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\aaata\\ScannerAR\\Assets\\MenuScanner.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Assets\\MenuScanner.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\aaata\\ScannerAR\\Assets\\MenuViewer.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:Assets\\MenuViewer.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     }
   ],
   "DocumentGroupContainers": [
@@ -26,32 +26,8 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 0,
           "Children": [
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "MenuViewer.cs",
-              "DocumentMoniker": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuViewer.cs",
-              "RelativeDocumentMoniker": "Assets\\MenuViewer.cs",
-              "ToolTip": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuViewer.cs",
-              "RelativeToolTip": "Assets\\MenuViewer.cs",
-              "ViewState": "AgIAABQAAAAAAAAAAAAIwC0AAAASAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-01-29T19:14:05.559Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "MenuScanner.cs",
-              "DocumentMoniker": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuScanner.cs",
-              "RelativeDocumentMoniker": "Assets\\MenuScanner.cs",
-              "ToolTip": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuScanner.cs",
-              "RelativeToolTip": "Assets\\MenuScanner.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEQAAAAqAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-01-29T18:19:53.341Z"
-            },
             {
               "$type": "Document",
               "DocumentIndex": 0,
@@ -60,10 +36,24 @@
               "RelativeDocumentMoniker": "Assets\\ViewerReceiver.cs",
               "ToolTip": "C:\\Users\\aaata\\ScannerAR\\Assets\\ViewerReceiver.cs",
               "RelativeToolTip": "Assets\\ViewerReceiver.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA8AAAAMAAAAAAAAAA==",
+              "ViewState": "AgIAAJwAAAAAAAAAAAAAAHQAAAANAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-01-07T22:40:53.533Z",
+              "IsPinned": true,
               "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "MenuScanner.cs",
+              "DocumentMoniker": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuScanner.cs",
+              "RelativeDocumentMoniker": "Assets\\MenuScanner.cs",
+              "ToolTip": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuScanner.cs",
+              "RelativeToolTip": "Assets\\MenuScanner.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-01-29T18:19:53.341Z",
+              "IsPinned": true
             },
             {
               "$type": "Document",
@@ -73,10 +63,22 @@
               "RelativeDocumentMoniker": "Assets\\ScannerSender.cs",
               "ToolTip": "C:\\Users\\aaata\\ScannerAR\\Assets\\ScannerSender.cs",
               "RelativeToolTip": "Assets\\ScannerSender.cs",
-              "ViewState": "AgIAAAkAAAAAAAAAAIBJwCYAAAAlAAAAAAAAAA==",
+              "ViewState": "AgIAAAMAAAAAAAAAAAAAABUAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-01-07T19:04:17.789Z",
+              "WhenOpened": "2026-01-30T21:25:00.019Z",
               "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "MenuViewer.cs",
+              "DocumentMoniker": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuViewer.cs",
+              "RelativeDocumentMoniker": "Assets\\MenuViewer.cs",
+              "ToolTip": "C:\\Users\\aaata\\ScannerAR\\Assets\\MenuViewer.cs",
+              "RelativeToolTip": "Assets\\MenuViewer.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAC0AAAASAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-01-29T19:14:05.559Z"
             }
           ]
         }
