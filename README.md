@@ -1,6 +1,6 @@
-AR Scanner & Viewer
+AR Scanner
 
-Este projeto é um sistema de Realidade Aumentada que utiliza dois dispositivos móveis conectados via Wi-Fi para realizar o escaneamento e visualização de superfícies em tempo real.
+Sistema de Realidade Aumentada que utiliza dois dispositivos móveis conectados via Wi-Fi para realizar o escaneamento e visualização de superfícies em tempo real.
 
 O sistema opera com uma arquitetura Mestre-Escravo (Scanner-Viewer):
 
@@ -25,8 +25,6 @@ Dispositivo 1: Scanner (Emissor)
 
 Responsável por lançar os raios (Raycast) e enviar os dados.
 
-    Modelo de Referência: Samsung Galaxy S23+
-
     Requisito Mínimo: Android 8.0, com suporte a ARCore (Google Play Services for AR).
 
     Sensores: Câmera, Giroscópio, Acelerômetro (Depth API recomendada).
@@ -35,11 +33,9 @@ Dispositivo 2: Viewer (Receptor)
 
 Responsável por receber os dados e desenhar os triângulos no espaço.
 
-    Modelo de Referência: Samsung Galaxy S9+
-
     Requisito Mínimo: Android 8.0, com suporte a ARCore.
 
-    Nota: Dispositivos mais antigos podem sofrer maior drift (deslocamento) de odometria.
+    Nota: Dispositivos mais antigos sofrem muito drift de odometria.
 
 Rede
 
