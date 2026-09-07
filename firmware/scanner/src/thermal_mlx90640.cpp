@@ -20,20 +20,25 @@ bool ThermalSensor::updateFrame() {
     return false;
 }
 
-float ThermalSensor::getPointTemperature(float relativeAngleDeg) {
-    // FOV horizontal do MLX90640 é aproximadamente 55° (32 colunas)
-    // Mapeia o ângulo relativo ao centro da lente (-27.5° a +27.5°) para uma coluna (0 a 31)
-    float fovMin = -27.5f;
-    float fovMax = 27.5f;
-    if (relativeAngleDeg < fovMin || relativeAngleDeg > fovMax) {
-        return 20.0f; // Temperatura ambiente padrão fora do FOV
+float ThermalSensor::getPointTemperature(float angleHorizDeg, float angleVertDeg) {
+    // FOV do MLX90640ESF-BAA (Wide Angle): 110° Horizontal x 75° Vertical (32x24)
+    float fovHMin = -THERMAL_FOV_H_DEG * 0.5f; // -55°
+    float fovHMax = THERMAL_FOV_H_DEG * 0.5f;  // +55°
+    float fovVMin = -THERMAL_FOV_V_DEG * 0.5f; // -37.5°
+    float fovVMax = THERMAL_FOV_V_DEG * 0.5f;  // +37.5°
+
+    if (angleHorizDeg < fovHMin || angleHorizDeg > fovHMax ||
+        angleVertDeg < fovVMin || angleVertDeg > fovVMax) {
+        return 21.0f; // Temperatura ambiente de referência fora do cone térmico
     }
 
-    int col = (int)((relativeAngleDeg - fovMin) / (fovMax - fovMin) * 31.0f);
-    if (col < 0) col = 0;
-    if (col > 31) col = 31;
+    // Mapeamento angular bilinear nos 32x24 pixels
+    int col = (int)((angleHorizDeg - fovHMin) / THERMAL_FOV_H_DEG * 31.0f);
+    int row = (int)((angleVertDeg - fovVMin) / THERMAL_FOV_V_DEG * 23.0f);
 
-    // Retorna a temperatura média da coluna central (linha 12)
-    int index = 12 * 32 + col;
+    col = constrain(col, 0, 31);
+    row = constrain(row, 0, 23);
+
+    int index = row * 32 + col;
     return frame[index];
 }

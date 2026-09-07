@@ -4,8 +4,13 @@
 #include "config.h"
 #include <SPI.h>
 #include <DW1000.h>
+#include <DW1000Ranging.h>
 
 class UwbTag {
+private:
+    static void handleReceived();
+    static void handleSent();
+
 public:
     UwbTag();
     bool begin();

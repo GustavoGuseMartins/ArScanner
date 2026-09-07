@@ -15,9 +15,11 @@ public:
     StepperController();
     void begin();
     void setSpeedRpm(float rpm);
+    void setDirection(int dir);
     void update();
     float getCurrentAngle();
     void stepOnce();
+    void resetAngle();
 };
 
 #endif // STEPPER_TMC2209_H

@@ -12,8 +12,9 @@ void ImuSensor::update() {
     mpu.update();
 }
 
+// Inversão dos eixos decorrente da montagem física no verso da placa (de costas para o LiDAR):
 float ImuSensor::getPitch() {
-    return mpu.getAngleX();
+    return -mpu.getAngleX(); // Inversão para manter correspondência com inclinação frontal do drone
 }
 
 float ImuSensor::getRoll() {

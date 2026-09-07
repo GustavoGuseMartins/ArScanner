@@ -1,31 +1,57 @@
 using System;
-using System.IO.Ports;
+using System.Net;
+using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Threading;
 using UnityEngine;
 
 namespace ArScanner.Network
 {
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct UwbPositionData
     {
         public float tagX;
         public float tagY;
         public float tagZ;
+        public float distAnchor1;
+        public float distAnchor2;
+        public float distAnchor3;
         public uint timestampMs;
+    }
+
+    public enum UwbTransportMode
+    {
+        UDP,
+        TCP,
+        Simulated
     }
 
     public class UwbDataReceiver : MonoBehaviour
     {
-        [Header("Configuração Serial / UWB Base")]
-        public string portName = "COM3";
-        public int baudRate = 115200;
+        [Header("Modo de Transporte UWB")]
+        [Tooltip("Modo de recepção dos dados ToF da base UWB")]
+        public UwbTransportMode transportMode = UwbTransportMode.UDP;
 
-        public Vector3 LatestPosition { get; private set; }
-        public bool IsConnected { get; private set; }
+        [Header("Configuração UDP (Padrão Android / Wi-Fi)")]
+        [Tooltip("Porta UDP na qual a base UWB ou bridge transmite os pacotes UwbPositionPacket")]
+        public int udpPort = 9999;
 
-        private SerialPort serialPort;
-        private Thread readThread;
-        private bool isRunning = false;
+        [Header("Configuração TCP (Opcional)")]
+        public string tcpHost = "192.168.4.2";
+        public int tcpPort = 9999;
+
+        [Header("Posição e Diagnóstico")]
+        public Vector3 LatestPosition = Vector3.zero;
+        public float DistanceAnchor1 = 0f;
+        public float DistanceAnchor2 = 0f;
+        public float DistanceAnchor3 = 0f;
+        public bool IsConnected = false;
+        public long PacketsReceived = 0;
+
+        private UdpClient udpClient;
+        private TcpClient tcpClient;
+        private Thread receiveThread;
+        private volatile bool isRunning = false;
 
         private void Start()
         {
@@ -34,59 +60,199 @@ namespace ArScanner.Network
 
         public void StartReceiver()
         {
-            try
-            {
-                serialPort = new SerialPort(portName, baudRate);
-                serialPort.Open();
-                IsConnected = true;
-                isRunning = true;
+            StopReceiver();
+            isRunning = true;
 
-                readThread = new Thread(ReadLoop) { IsBackground = true };
-                readThread.Start();
-                Debug.Log($"[UWB Receiver] Porta {portName} aberta com sucesso!");
-            }
-            catch (Exception ex)
+            switch (transportMode)
             {
-                Debug.LogWarning($"[UWB Receiver] Não foi possível abrir porta {portName}: {ex.Message}");
+                case UwbTransportMode.UDP:
+                    StartUdpReceiver();
+                    break;
+                case UwbTransportMode.TCP:
+                    StartTcpReceiver();
+                    break;
+                case UwbTransportMode.Simulated:
+                    IsConnected = true;
+                    break;
             }
         }
 
-        private void ReadLoop()
+        public void StopReceiver()
         {
-            int packetSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(UwbPositionData));
-            byte[] buffer = new byte[packetSize];
+            isRunning = false;
 
-            while (isRunning && serialPort != null && serialPort.IsOpen)
+            try
+            {
+                if (udpClient != null)
+                {
+                    udpClient.Close();
+                    udpClient = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[UWB UDP] Erro ao encerrar socket: {ex.Message}");
+            }
+
+            try
+            {
+                if (tcpClient != null)
+                {
+                    tcpClient.Close();
+                    tcpClient = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[UWB TCP] Erro ao encerrar socket: {ex.Message}");
+            }
+
+            if (receiveThread != null && receiveThread.IsAlive)
+            {
+                receiveThread.Abort();
+                receiveThread = null;
+            }
+
+            IsConnected = false;
+        }
+
+        private void StartUdpReceiver()
+        {
+            try
+            {
+                udpClient = new UdpClient(udpPort);
+                receiveThread = new Thread(UdpLoop)
+                {
+                    Name = "UwbUdpReceiverThread",
+                    IsBackground = true
+                };
+                receiveThread.Start();
+                IsConnected = true;
+                Debug.Log($"[UWB Receiver] Escutando pacotes UWB na porta UDP {udpPort} (Cross-Platform / Android)...");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[UWB Receiver] Falha ao iniciar UDP {udpPort}: {ex.Message}");
+            }
+        }
+
+        private void StartTcpReceiver()
+        {
+            receiveThread = new Thread(TcpLoop)
+            {
+                Name = "UwbTcpReceiverThread",
+                IsBackground = true
+            };
+            receiveThread.Start();
+        }
+
+        private void UdpLoop()
+        {
+            int packetSize = Marshal.SizeOf(typeof(UwbPositionData));
+            IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, udpPort);
+
+            while (isRunning && udpClient != null)
             {
                 try
                 {
-                    int bytesRead = 0;
-                    while (bytesRead < packetSize)
+                    byte[] data = udpClient.Receive(ref remoteEP);
+                    if (data.Length >= packetSize)
                     {
-                        int r = serialPort.Read(buffer, bytesRead, packetSize - bytesRead);
-                        if (r <= 0) break;
-                        bytesRead += r;
+                        UwbPositionData posPkt = ByteArrayToStructure<UwbPositionData>(data);
+                        ProcessPacket(posPkt);
                     }
-
-                    if (bytesRead == packetSize)
+                }
+                catch (SocketException)
+                {
+                    // Socket encerrado intencionalmente
+                }
+                catch (Exception ex)
+                {
+                    if (isRunning)
                     {
-                        UwbPositionData data = ByteArrayToStructure<UwbPositionData>(buffer);
-                        LatestPosition = new Vector3(data.tagX, data.tagY, data.tagZ);
+                        Debug.LogWarning($"[UWB UDP Loop] Erro: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        private void TcpLoop()
+        {
+            int packetSize = Marshal.SizeOf(typeof(UwbPositionData));
+            byte[] buffer = new byte[packetSize];
+
+            while (isRunning)
+            {
+                try
+                {
+                    tcpClient = new TcpClient();
+                    var ar = tcpClient.BeginConnect(tcpHost, tcpPort, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(3)) || !tcpClient.Connected)
+                    {
+                        throw new SocketException((int)SocketError.TimedOut);
+                    }
+                    tcpClient.EndConnect(ar);
+
+                    NetworkStream stream = tcpClient.GetStream();
+                    IsConnected = true;
+
+                    while (isRunning && tcpClient.Connected)
+                    {
+                        int bytesRead = 0;
+                        while (bytesRead < packetSize && isRunning)
+                        {
+                            int r = stream.Read(buffer, bytesRead, packetSize - bytesRead);
+                            if (r <= 0) break;
+                            bytesRead += r;
+                        }
+
+                        if (bytesRead == packetSize)
+                        {
+                            UwbPositionData posPkt = ByteArrayToStructure<UwbPositionData>(buffer);
+                            ProcessPacket(posPkt);
+                        }
                     }
                 }
                 catch
                 {
-                    // Ignora erros de timeout de leitura temporários
+                    IsConnected = false;
+                    if (isRunning) Thread.Sleep(2000);
+                }
+                finally
+                {
+                    if (tcpClient != null)
+                    {
+                        tcpClient.Close();
+                        tcpClient = null;
+                    }
                 }
             }
         }
 
+        private void ProcessPacket(UwbPositionData data)
+        {
+            // Coordenadas métricas em espaço Unity (X = direita, Y = altura, Z = profundidade)
+            LatestPosition = new Vector3(data.tagX, data.tagY, data.tagZ);
+            DistanceAnchor1 = data.distAnchor1;
+            DistanceAnchor2 = data.distAnchor2;
+            DistanceAnchor3 = data.distAnchor3;
+            PacketsReceived++;
+            IsConnected = true;
+        }
+
+        public void SetSimulatedPosition(Vector3 simPos)
+        {
+            LatestPosition = simPos;
+            IsConnected = true;
+            PacketsReceived++;
+        }
+
         private static T ByteArrayToStructure<T>(byte[] bytes) where T : struct
         {
-            System.Runtime.InteropServices.GCHandle handle = System.Runtime.InteropServices.GCHandle.Alloc(bytes, System.Runtime.InteropServices.GCHandleType.Pinned);
+            GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                return (T)System.Runtime.InteropServices.Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T));
+                return (T)Marshal.PtrToStructure(handle.AddrOfPinnedObject(), typeof(T));
             }
             finally
             {
@@ -96,8 +262,7 @@ namespace ArScanner.Network
 
         private void OnDestroy()
         {
-            isRunning = false;
-            if (serialPort != null && serialPort.IsOpen) serialPort.Close();
+            StopReceiver();
         }
     }
 }

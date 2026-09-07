@@ -14,7 +14,7 @@ public:
     ThermalSensor();
     bool begin();
     bool updateFrame();
-    float getPointTemperature(float relativeAngleDeg);
+    float getPointTemperature(float angleHorizDeg, float angleVertDeg = 0.0f);
 };
 
 #endif // THERMAL_MLX90640_H

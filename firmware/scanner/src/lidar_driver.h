@@ -17,6 +17,7 @@ public:
     LidarDriver();
     void begin();
     void setMotorSpeed(uint8_t pwmVal);
+    void stopMotor();
     bool readPacket(LidarMeasurement &measurement);
 };
 

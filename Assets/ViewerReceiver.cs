@@ -1,4 +1,4 @@
-using UnityEngine;
+ï»¿using UnityEngine;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -6,27 +6,27 @@ using System.Threading;
 using System.Globalization;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using UnityEngine.XR.ARFoundation; // <--- NECESSÁRIO
+using UnityEngine.XR.ARFoundation; // <--- NECESSï¿½RIO
 
 public class ViewerReceiver : MonoBehaviour
 {
-    [Header("Visualização")]
+    [Header("Visualizaï¿½ï¿½o")]
     public GameObject pontoPrefab;
 
     [Header("AR Core")]
     public ARAnchorManager anchorManager; // <--- ARRASTE O MANAGER AQUI NO INSPECTOR
 
-    [Header("Configurações de Memória")]
+    [Header("Configuraï¿½ï¿½es de Memï¿½ria")]
     [Range(100, 300000)] // Aumentei um pouco o range do slider
     public int maximoPontos = 100000;
 
-    [Tooltip("Distância mínima em metros entre dois pontos (Filtro de Grade)")]
+    [Tooltip("Distï¿½ncia mï¿½nima em metros entre dois pontos (Filtro de Grade)")]
     public float distanciaMinima = 0.05f;
 
     [Header("Rede")]
     public int porta = 8080;
 
-    // Variáveis internas
+    // Variï¿½veis internas
     private UdpClient udpServer;
     private Thread threadRecebimento;
     private ConcurrentQueue<Pose> filaDeEntrada = new ConcurrentQueue<Pose>();
@@ -36,14 +36,23 @@ public class ViewerReceiver : MonoBehaviour
     private Queue<PontoAtivo> pontosVivos = new Queue<PontoAtivo>();
     private HashSet<Vector3Int> gradeOcupada = new HashSet<Vector3Int>();
 
-    // Variável para segurar o mundo no lugar
+    // Variï¿½vel para segurar o mundo no lugar
     private Transform mundoAncora; // <--- O PAI DE TODOS OS PONTOS
+
+    void Awake()
+    {
+        if (FindFirstObjectByType<ArScanner.ArScannerController>() == null)
+        {
+            GameObject arScannerObj = new GameObject("ArScannerManager");
+            arScannerObj.AddComponent<ArScanner.ArScannerController>();
+        }
+    }
 
     void Start()
     {
         Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
-        // --- CRIAÇÃO DA ÂNCORA (O PREGO NO MUNDO) ---
+        // --- CRIAï¿½ï¿½O DA ï¿½NCORA (O PREGO NO MUNDO) ---
         CriarAncoraRaiz();
 
         udpServer = new UdpClient(porta);
@@ -60,14 +69,14 @@ public class ViewerReceiver : MonoBehaviour
         raiz.transform.rotation = Quaternion.identity;
 
         // Tenta adicionar o componente ARAnchor via script
-        // Isso diz ao ARCore: "Mantenha este objeto fixo no mundo físico, custe o que custar"
+        // Isso diz ao ARCore: "Mantenha este objeto fixo no mundo fï¿½sico, custe o que custar"
         if (anchorManager != null)
         {
             raiz.AddComponent<ARAnchor>();
         }
         else
         {
-            Debug.LogWarning("ARAnchorManager não foi definido no Inspector!");
+            Debug.LogWarning("ARAnchorManager nï¿½o foi definido no Inspector!");
         }
 
         mundoAncora = raiz.transform;
@@ -90,16 +99,16 @@ public class ViewerReceiver : MonoBehaviour
 
             if (gradeOcupada.Contains(chaveGrade)) continue;
 
-            // --- MUDANÇA CRUCIAL AQUI ---
+            // --- MUDANï¿½A CRUCIAL AQUI ---
 
-            // 1. Instancia o objeto (sem posição ainda)
+            // 1. Instancia o objeto (sem posiï¿½ï¿½o ainda)
             GameObject novoObj = Instantiate(pontoPrefab);
 
-            // 2. Define o PAI como sendo a Âncora
+            // 2. Define o PAI como sendo a ï¿½ncora
             novoObj.transform.SetParent(mundoAncora, false);
 
-            // 3. Define a posição LOCAL (relativa à âncora)
-            // Isso garante que se a âncora corrigir o drift, o ponto vem junto
+            // 3. Define a posiï¿½ï¿½o LOCAL (relativa ï¿½ ï¿½ncora)
+            // Isso garante que se a ï¿½ncora corrigir o drift, o ponto vem junto
             novoObj.transform.localPosition = dadosPonto.position;
             novoObj.transform.localRotation = dadosPonto.rotation;
 
