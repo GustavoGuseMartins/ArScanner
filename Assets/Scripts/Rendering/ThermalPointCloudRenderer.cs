@@ -24,6 +24,11 @@ namespace ArScanner.Rendering
         [Range(0.005f, 0.1f)]
         public float pointSize = 0.00625f;
 
+        [Tooltip("Amplia apenas a representação de pontos com vizinhança planar medida. Não altera o voxel ou as posições exportadas.")]
+        public bool adaptivePointSizing = true;
+        private float lastPointSize = 0.00625f;
+        private bool lastAdaptivePointSizing = true;
+
         [Range(0f, 1f)]
         public float pointOpacity = 1.0f;
         private float lastOpacity = 1.0f;
@@ -102,6 +107,7 @@ namespace ArScanner.Rendering
         private StoredPoint[] pointsBuffer;
         private ParticleSystem.Particle[] particlesBuffer;
         private bool[] lodCovered;
+        private float[] supportedPointSpacing;
         private bool bufferDirty = false;
         private int nextReplacementIndex = 0;
         private Material pointMaterial;
@@ -109,6 +115,7 @@ namespace ArScanner.Rendering
         private Vector3 lastVisibilityCameraPosition;
         private bool hasVisibilityCameraPosition;
         private float nextVisibilityTime;
+        private float metersPerPixelAtUnitDistance;
 
         private void Awake()
         {
@@ -140,13 +147,14 @@ namespace ArScanner.Rendering
                     axis.startWidth = .006f;
                     axis.endWidth = .002f;
                     axis.startColor = axis.endColor = colors[i];
-                    axis.sharedMaterial = pointMaterial;
+                    axis.sharedMaterial = surfaceMaterial ?? pointMaterial;
                     scannerAxes[i] = axis;
                 }
             }
             pointsBuffer = new StoredPoint[maxPoints];
             particlesBuffer = new ParticleSystem.Particle[maxPoints];
             lodCovered = new bool[maxPoints];
+            supportedPointSpacing = new float[maxPoints];
         }
 
         private void EnsureParticleSystemSetup()
@@ -187,11 +195,13 @@ namespace ArScanner.Rendering
             {
                 pointMaterial = new Material(defaultShader);
                 pointMaterial.SetFloat("_ZWrite", 1f);
+                pointMaterial.SetFloat("_RoundPoints", 1f);
                 pointMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry + 2;
                 psRenderer.sharedMaterial = pointMaterial;
                 surfaceMaterial = new Material(defaultShader);
                 surfaceMaterial.SetFloat("_Cull", 2f); // Back
                 surfaceMaterial.SetFloat("_ZWrite", 1f);
+                surfaceMaterial.SetFloat("_RoundPoints", 0f);
                 surfaceMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry + 1;
             }
         }
@@ -238,6 +248,17 @@ namespace ArScanner.Rendering
             }
             Vector3 cameraPosition = spatial != null && spatial.arCameraTransform != null
                 ? spatial.arCameraTransform.position : Camera.main != null ? Camera.main.transform.position : Vector3.zero;
+            if (!Mathf.Approximately(lastPointSize,pointSize) || lastAdaptivePointSizing!=adaptivePointSizing)
+            {
+                if (lastAdaptivePointSizing!=adaptivePointSizing)
+                {
+                    lodDirty=true;
+                    nextLodTime=0f;
+                }
+                lastPointSize=pointSize;
+                lastAdaptivePointSizing=adaptivePointSizing;
+                RefreshPointVisibility(cameraPosition);
+            }
             if (Vector3.Distance(cameraPosition,lastLodCameraPosition) > .5f) lodDirty = true;
             if (lodDirty && Time.unscaledTime >= nextLodTime) RebuildSurfaceLod(cameraPosition);
             if (Time.unscaledTime >= nextVisibilityTime &&
@@ -264,6 +285,8 @@ namespace ArScanner.Rendering
                 (spatial.localPreviewWithoutUwb && spatial.PreviewPlaced));
             bool directionKnown = spatial != null && spatial.PreviewHeadingAligned &&
                 (receiver == null || receiver.HasUsablePanReference);
+            if (receiver != null && receiver.status.imuOrientationEnabled && !receiver.HasUsableImuOrientation)
+                directionKnown=false;
             axesRoot.gameObject.SetActive(showScannerAxes && placed);
             for (int axis = 0; axis < scannerAxes.Length; axis++)
                 if (scannerAxes[axis] != null)
@@ -272,6 +295,8 @@ namespace ArScanner.Rendering
             // rotates here; the unknown-heading indicator stays vertical in AR.
             float pan = receiver != null && receiver.HasFreshStatus
                 ? receiver.status.panDegrees : 0f;
+            if (receiver != null && receiver.HasUsableImuOrientation)
+                pan=receiver.status.imuRelativeHeadYawDeg;
             if (directionKnown)
                 axesRoot.localRotation = Quaternion.Euler(pointPitchOffset, pointYawOffset, pointRollOffset) *
                     Quaternion.Euler(0f, pan, 0f);
@@ -355,7 +380,7 @@ namespace ArScanner.Rendering
                 particlesBuffer[existingIndex].startColor = color;
                 particlesBuffer[existingIndex].startSize =
                     VisibleFromCamera(existing.viewDirection, existing.worldPosition, cameraPosition) &&
-                    !lodCovered[existingIndex] ? pointSize : 0f;
+                    !lodCovered[existingIndex] ? DisplayPointSize(existingIndex,cameraPosition) : 0f;
                 particlesBuffer[existingIndex].position = existing.worldPosition;
                 bufferDirty = true;
                 lodDirty = true;
@@ -397,8 +422,9 @@ namespace ArScanner.Rendering
                 particlesBuffer[targetIndex].position = worldPos;
                 particlesBuffer[targetIndex].startColor = color;
                 lodCovered[targetIndex] = false;
+                supportedPointSpacing[targetIndex] = 0f;
                 particlesBuffer[targetIndex].startSize =
-                    VisibleFromCamera(viewDirection, worldPos, cameraPosition) ? pointSize : 0f;
+                    VisibleFromCamera(viewDirection, worldPos, cameraPosition) ? DisplayPointSize(targetIndex,cameraPosition) : 0f;
                 particlesBuffer[targetIndex].remainingLifetime = float.MaxValue;
 
                 voxelToIndex[voxelKey] = targetIndex;
@@ -430,15 +456,52 @@ namespace ArScanner.Rendering
 
         private void RefreshPointVisibility(Vector3 cameraPosition)
         {
+            UpdateDisplayScale();
             for (int i = 0; i < activePointsCount; i++)
                 particlesBuffer[i].startSize = !lodCovered[i] &&
                     VisibleFromCamera(pointsBuffer[i].viewDirection,
-                        pointsBuffer[i].worldPosition, cameraPosition) ? pointSize : 0f;
+                        pointsBuffer[i].worldPosition, cameraPosition) ? DisplayPointSize(i,cameraPosition) : 0f;
             bufferDirty = true;
+        }
+
+        private float DisplayPointSize(int index,Vector3 cameraPosition)
+        {
+            if (!adaptivePointSizing) return pointSize;
+            float metersPerPixel = Vector3.Distance(pointsBuffer[index].worldPosition,cameraPosition)*metersPerPixelAtUnitDistance;
+            bool thermal = (pointsBuffer[index].surfaceFlags & ScanPointData.ThermalUnavailableFlag)==0 &&
+                !float.IsNaN(pointsBuffer[index].temperature) && !float.IsInfinity(pointsBuffer[index].temperature);
+            return AdaptivePointDiameter(pointSize,supportedPointSpacing[index],voxelGridSize,
+                metersPerPixel,thermal);
+        }
+
+        private void UpdateDisplayScale()
+        {
+            Camera camera=spatial!=null && spatial.arCameraTransform!=null
+                ? spatial.arCameraTransform.GetComponent<Camera>() : Camera.main;
+            metersPerPixelAtUnitDistance=camera!=null && camera.pixelHeight>0 && !camera.orthographic
+                ? 2f*Mathf.Tan(camera.fieldOfView*Mathf.Deg2Rad*.5f)/camera.pixelHeight : 0f;
+        }
+
+        // A point with no measured planar neighbors stays small. Supported
+        // splats cannot reach the nearest other observation or exceed 3.5 cm.
+        // An isolated thermal sample is never expanded by the visibility floor.
+        public static float AdaptivePointDiameter(float requestedSize,float supportedSpacing,
+            float voxelSize,float metersPerPixel,bool hasThermal)
+        {
+            requestedSize=Mathf.Max(.001f,requestedSize);
+            if (supportedSpacing>0f && !float.IsNaN(supportedSpacing) && !float.IsInfinity(supportedSpacing))
+            {
+                float cap=Mathf.Min(.035f,Mathf.Min(voxelSize*1.4f,supportedSpacing*.9f));
+                return Mathf.Min(cap,Mathf.Max(requestedSize,Mathf.Max(supportedSpacing*.8f,metersPerPixel*1.5f)));
+            }
+            if (hasThermal) return requestedSize;
+            float isolatedCap=Mathf.Max(requestedSize,Mathf.Min(voxelSize*.75f,requestedSize*2f));
+            return Mathf.Min(isolatedCap,Mathf.Max(requestedSize,metersPerPixel*1.5f));
         }
 
         private void RebuildSurfaceLod(Vector3 cameraPosition)
         {
+            UpdateDisplayScale();
             lodDirty = false;
             nextLodTime = Time.unscaledTime + 2f;
             lastLodCameraPosition = cameraPosition;
@@ -448,7 +511,7 @@ namespace ArScanner.Rendering
             if (lodObject == null) return;
             lodObject.SetActive(enableSurfaceLod);
             bool[] covered = null;
-            if (enableSurfaceLod && activePointsCount >= 8)
+            if ((enableSurfaceLod || adaptivePointSizing) && activePointsCount >= 6)
             {
                 var samples = new SurfaceLodBuilder.Sample[activePointsCount];
                 for (int i = 0; i < activePointsCount; i++)
@@ -458,21 +521,26 @@ namespace ArScanner.Rendering
                         color=WithOpacity(PointColor(pointsBuffer[i].temperature,pointsBuffer[i].surfaceFlags)),
                         temperature=pointsBuffer[i].temperature,
                         hasThermal=(pointsBuffer[i].surfaceFlags & ScanPointData.ThermalUnavailableFlag)==0 &&
-                            !float.IsNaN(pointsBuffer[i].temperature)
+                            !float.IsNaN(pointsBuffer[i].temperature) && !float.IsInfinity(pointsBuffer[i].temperature)
                     };
-                lodMesh = SurfaceLodBuilder.Build(samples,cameraPosition,lodNearMeters,lodFarMeters,
+                lodMesh = SurfaceLodBuilder.Build(samples,cameraPosition,enableSurfaceLod ? lodNearMeters : float.PositiveInfinity,lodFarMeters,
                     lodTileSize,lodPlaneTolerance,lodMaxThermalSpreadC,
-                    out covered,out surfaceLodPolygons);
+                    out covered,out surfaceLodPolygons,out float[] spacing);
+                Array.Copy(spacing,supportedPointSpacing,activePointsCount);
                 lodFilter.sharedMesh = lodMesh;
             }
-            else lodFilter.sharedMesh = null;
+            else
+            {
+                lodFilter.sharedMesh = null;
+                Array.Clear(supportedPointSpacing,0,activePointsCount);
+            }
             for (int i = 0; i < activePointsCount; i++)
             {
                 bool merged = covered != null && covered[i];
                 lodCovered[i] = merged;
                 particlesBuffer[i].startSize = !merged &&
                     VisibleFromCamera(pointsBuffer[i].viewDirection,
-                        pointsBuffer[i].worldPosition, cameraPosition) ? pointSize : 0f;
+                        pointsBuffer[i].worldPosition, cameraPosition) ? DisplayPointSize(i,cameraPosition) : 0f;
                 if (merged) surfaceLodMergedPoints++;
             }
             bufferDirty = true;

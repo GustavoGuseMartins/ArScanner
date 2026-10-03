@@ -18,7 +18,95 @@ namespace ArScanner.EditorTools
             ValidateUnknownHeadingIndicator();
             ValidateThermalStatus();
             ValidateImuStatus();
+            ValidateHudLayout();
+            ValidateImuOrientationAndFrameRate();
             Debug.Log("[ScannerControlValidation] PASS: pan reference, delayed/stale command acknowledgements, timeout, neutral heading indicator, IMU v11/legacy parsing and invalid-sample gate.");
+        }
+
+        private static void ValidateHudLayout()
+        {
+            var screens = new [] {
+                new Vector2(1280,720), new Vector2(2340,1080), new Vector2(1920,1080),
+                new Vector2(1080,2340), new Vector2(1366,1024), new Vector2(640,360) };
+            foreach (Vector2 screen in screens)
+                foreach (bool collapsed in new [] {false,true})
+                {
+                    Rect safe = new Rect(screen.x*.04f, screen.y*.03f, screen.x*.93f, screen.y*.93f);
+                    var layout = ArScanner.UI.ArScannerHUD.CalculateLayout(screen.x, screen.y, safe, collapsed);
+                    Require(Mathf.Abs(layout.controls.xMax*layout.scale-(safe.xMax-16f*layout.scale)) < .01f,
+                        "Controls must remain anchored to the safe right edge on wide and portrait displays.");
+                    Require(layout.connections.x >= layout.safe.x && layout.controls.x >= layout.connections.xMax &&
+                        layout.controls.y >= layout.safe.y && layout.controls.yMax <= layout.safe.yMax &&
+                        layout.preview.width > 0f && layout.preview.height > 0f &&
+                        layout.preview.x >= layout.center.x-.01f && layout.preview.xMax <= layout.center.xMax+.01f &&
+                        layout.preview.yMax <= layout.safe.yMax,
+                        "The HUD must preserve a central viewing area and keep preview/controls inside the safe display.");
+                    Require(Mathf.Abs(layout.safe.y*layout.scale-(screen.y-safe.yMax)) < .01f,
+                        "Bottom-left safe-area coordinates must convert to IMGUI top-left coordinates.");
+                }
+        }
+
+        private static void ValidateImuOrientationAndFrameRate()
+        {
+            Require(PointCloudTcpReceiver.TryCalculateThermalFrameRate(1000,4,2000,8,out float rate) &&
+                Mathf.Approximately(rate,4f), "Thermal acquisition rate must use the scanner clock, independently of HTTP arrival jitter.");
+            Require(!PointCloudTcpReceiver.TryCalculateThermalFrameRate(1000,4,1000,8,out _) &&
+                !PointCloudTcpReceiver.TryCalculateThermalFrameRate(2000,8,1000,4,out _) &&
+                !PointCloudTcpReceiver.TryCalculateThermalFrameRate(1000,8,2000,4,out _),
+                "Duplicate snapshots and reset clocks/counters cannot publish a spurious thermal rate.");
+            Require(PointCloudTcpReceiver.TryCalculateThermalFrameRate(uint.MaxValue-499,4,500,8,out rate) &&
+                Mathf.Approximately(rate,4f), "The scanner clock rollover must preserve a valid thermal rate.");
+            var go = new GameObject("ImuOrientationContractValidation");
+            go.SetActive(false);
+            try
+            {
+                var receiver = go.AddComponent<PointCloudTcpReceiver>();
+                receiver.autoConnect = false; receiver.isConnected = true;
+                SetField(receiver,"statusReceivedTime",Time.unscaledTime);
+                receiver.status = JsonUtility.FromJson<PointCloudTcpReceiver.ScannerStatus>(
+                    "{\"diagnosticVersion\":14,\"imuReady\":true,\"imuBiasCalibrated\":true,"+
+                    "\"imuOrientationReferenceValid\":true,\"imuOrientationEnabled\":true,"+
+                    "\"imuOrientationState\":\"ready\",\"imuOrientationGeneration\":9,"+
+                    "\"imuOrientationAgeMs\":20,\"imuGravityValid\":true,\"imuStationary\":true,"+
+                    "\"imuRelativeHeadYawDeg\":45,\"imuRelativeBaseYawDeg\":0.2,\"imuYawUncertaintyDeg\":0.5,"+
+                    "\"imuBaseQw\":1,\"thermalFrameRateHz\":4,\"thermalFrameRateWindowMs\":1000,"+
+                    "\"thermalRequestedFrameRateHz\":8,\"thermalTargetFrameRateHz\":4}");
+                Require(receiver.HasUsableImuOrientation && receiver.ImuAllowsScanStart && receiver.CanSetPanSpeed &&
+                    receiver.status.imuOrientationGeneration == 9 && receiver.status.thermalTargetFrameRateHz == 4,
+                    "A fresh complete v14 orientation and negotiated thermal rate must survive the actual JSON contract.");
+                receiver.status.imuOrientationReferenceValid = false;
+                Require(!receiver.HasUsableImuOrientation && !receiver.ImuAllowsScanStart,
+                    "An enabled GY-25 with an invalid reference must block starting acquisition.");
+                receiver.status.imuOrientationEnabled = false;
+                Require(receiver.ImuAllowsScanStart, "Opt-out must preserve existing manual acquisition with no IMU reference.");
+                receiver.status.imuOrientationState = "reference_collecting";
+                Require(!receiver.ImuAllowsScanStart, "Acquisition cannot interrupt the explicit stationary reference collection.");
+                receiver.status.imuOrientationState = "ready";
+                receiver.status.imuOrientationReferenceValid = true;
+                receiver.status.imuBaseQw = 0;
+                Require(!receiver.HasUsableImuOrientation, "Missing/default quaternion values are not a valid orientation.");
+                receiver.status.imuBaseQw = 1;
+                receiver.status.imuRelativeBaseYawDeg = float.NaN;
+                Require(!receiver.HasUsableImuOrientation, "Nonfinite relative orientation must not reach the HUD or start gate.");
+                receiver.status.imuRelativeBaseYawDeg = 0;
+                receiver.status.imuOrientationAgeMs = 101;
+                Require(!receiver.HasUsableImuOrientation, "Expired orientation samples cannot be presented as usable.");
+                receiver.status.imuOrientationAgeMs = 20;
+                receiver.status.panMoving = true;
+                Require(!receiver.CanSetPanSpeed, "Motor speed cannot change during pan movement.");
+                receiver.status.panMoving = false;
+                receiver.status.isScanning = true;
+                Require(!receiver.CanSetPanSpeed, "Motor speed cannot change during acquisition.");
+                receiver.status.isScanning = false;
+                SetField(receiver,"statusReceivedTime",Time.unscaledTime-3f);
+                Require(!receiver.CanSetPanSpeed && !receiver.HasUsableImuOrientation,
+                    "Stale HTTP snapshots cannot enable speed commands or orientation assistance.");
+                SetField(receiver,"statusReceivedTime",Time.unscaledTime);
+                receiver.status.diagnosticVersion = 12;
+                Require(receiver.ImuAllowsScanStart && !receiver.HasUsableImuOrientation,
+                    "Legacy firmware preserves manual acquisition without claiming the v14 orientation contract.");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(go); }
         }
 
         private static void ValidateImuStatus()

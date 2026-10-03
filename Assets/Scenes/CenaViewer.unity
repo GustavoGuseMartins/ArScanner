@@ -779,6 +779,7 @@ MonoBehaviour:
   voxelGridSize: 0.025
   maxPointsPerFrame: 1200
   pointSize: 0.00625
+  adaptivePointSizing: 1
   pointOpacity: 1
   showThermalColors: 1
   thermalDisplayMinC: 18

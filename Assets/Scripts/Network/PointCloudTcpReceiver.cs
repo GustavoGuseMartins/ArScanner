@@ -102,6 +102,9 @@ namespace ArScanner.Network
             public uint thermalDuplicateSubpages, thermalFrameTimeouts, thermalReadErrors,
                 thermalOverruns, thermalInvalidFrames, thermalI2cHz,
                 thermalReadDurationMs, thermalFrameSpanMs;
+            public float thermalFrameRateHz;
+            public uint thermalFrameRateWindowMs;
+            public int thermalRequestedFrameRateHz, thermalTargetFrameRateHz;
             public string rgbMessage;
             public uint thermalFrames, thermalAgeMs, thermalFusedPoints, imuAgeMs;
             public uint imuSampleIntervalUs, imuIntegrationGaps;
@@ -109,6 +112,11 @@ namespace ArScanner.Network
             public int imuIdentity = -1;
             public uint imuInitAttempts, imuReadErrors;
             public bool imuBiasCalibrated, imuTiltApplied;
+            public string imuOrientationState;
+            public bool imuOrientationReferenceValid, imuOrientationEnabled, imuStationary, imuGravityValid;
+            public uint imuOrientationGeneration, imuOrientationAgeMs, imuOrientationGaps, imuStationaryMs;
+            public float imuRelativeHeadYawDeg, imuRelativeBaseYawDeg, imuPitchDeg, imuRollDeg, imuYawUncertaintyDeg;
+            public float imuBaseQw, imuBaseQx, imuBaseQy, imuBaseQz;
             public ImuRawData imuRaw;
             public bool isScanning, panParking, imuI2cAck, thermalI2cAck;
             public bool panMoving, panReferenceValid, panReferenceRestored, panReferenceDirty;
@@ -144,6 +152,9 @@ namespace ArScanner.Network
         public bool PanZeroConfirmationPending { get; private set; }
         public bool ScannerControlBusy => ScanStartPending || PanZeroConfirmationPending ||
             IsParking || Time.unscaledTime < parkRequestedUntil;
+        public bool CanSetPanSpeed => HasFreshStatus && status.diagnosticVersion >= 5 &&
+            !ScannerControlBusy && !DiagnosticsBusy && !isScanning && !status.isScanning &&
+            !status.panMoving && !status.panParking;
         public bool CanConfirmPanReference => HasFreshStatus && status != null &&
             status.diagnosticVersion >= 8 && !ScannerControlBusy && !DiagnosticsBusy && !isScanning &&
             !status.isScanning && !status.panParking && !status.panMoving;
@@ -167,7 +178,8 @@ namespace ArScanner.Network
         public float cameraMinTemperature, cameraMaxTemperature;
         public float thermalFramesPerSecond { get; private set; }
         private uint previousThermalFrames;
-        private float previousThermalSampleTime;
+        private uint previousThermalTimestampMs;
+        private bool hasPreviousThermalStatus;
         private UnityWebRequest cameraRequest;
         private Coroutine cameraCoroutine;
         private float nextCameraTime;
@@ -182,6 +194,24 @@ namespace ArScanner.Network
         // HTTP polling cadence is suitable for diagnostics, not IMU integration.
         public bool HasUsableImuSnapshot => HasFreshStatus && IsUsableImuSnapshot(status);
         public bool HasReadableImuSnapshot => HasFreshStatus && IsReadableImuSnapshot(status);
+        public bool HasUsableImuOrientation => HasFreshStatus && IsUsableImuOrientation(status);
+        public bool ImuAllowsScanStart => HasFreshStatus && (status.diagnosticVersion < 14 ||
+            (status.imuOrientationState != "reference_collecting" && (!status.imuOrientationEnabled ||
+                (HasUsableImuOrientation && status.imuStationary))));
+        public bool CanReferenceImuOrientation => CanSetPanSpeed && status.diagnosticVersion >= 14 &&
+            status.panReferenceValid && HasUsableImuSnapshot && status.imuBiasCalibrated &&
+            status.imuOrientationState != "reference_collecting";
+        public static bool IsUsableImuOrientation(ScannerStatus value)
+        {
+            if (value == null || value.diagnosticVersion < 14 || !value.imuReady || !value.imuBiasCalibrated ||
+                !value.imuOrientationReferenceValid || !value.imuGravityValid || value.imuOrientationAgeMs > 100 ||
+                value.imuOrientationState != "ready") return false;
+            if (!IsFinite(value.imuRelativeHeadYawDeg) || !IsFinite(value.imuRelativeBaseYawDeg) ||
+                !IsFinite(value.imuPitchDeg) || !IsFinite(value.imuRollDeg) || !IsFinite(value.imuYawUncertaintyDeg)) return false;
+            float norm = value.imuBaseQw*value.imuBaseQw + value.imuBaseQx*value.imuBaseQx +
+                value.imuBaseQy*value.imuBaseQy + value.imuBaseQz*value.imuBaseQz;
+            return value.imuYawUncertaintyDeg >= 0f && IsFinite(norm) && Mathf.Abs(norm-1f) <= .05f;
+        }
         public static bool IsUsableImuSnapshot(ScannerStatus value)
             => IsValidImuSnapshot(value, 100);
         public static bool IsReadableImuSnapshot(ScannerStatus value)
@@ -216,6 +246,16 @@ namespace ArScanner.Network
         [Serializable] private class ThermalOrientationResponse
         {
             public int thermalOrientationProfile = -1;
+        }
+        [Serializable] private class ImuOrientationResponse
+        {
+            public bool imuOrientationReferenceValid, imuOrientationEnabled;
+            public uint imuOrientationGeneration;
+            public string imuOrientationState;
+        }
+        [Serializable] private class ThermalFrameRateResponse
+        {
+            public int thermalRequestedFrameRateHz, thermalTargetFrameRateHz;
         }
         public string calibrationStatus = "Aguardando geometria do scanner.";
         public string lastScanCsvPath;
@@ -300,12 +340,10 @@ namespace ArScanner.Network
         public void Disconnect()
         {
             CancelPendingControl("Scanner desconectado.");
-            if (statusCoroutine != null) StopCoroutine(statusCoroutine);
-            statusCoroutine = null;
-            statusRequest?.Abort();
-            statusRequest?.Dispose();
-            statusRequest = null;
+            CancelStatusRequest();
             statusReceivedTime = -100f;
+            hasPreviousThermalStatus = false;
+            thermalFramesPerSecond = 0f;
             scannerDiagnosticLog?.Dispose();
             scannerDiagnosticLog = null;
             CancelDiagnosticRequest();
@@ -486,6 +524,11 @@ namespace ArScanner.Network
                     scannerCommandStatus = "Alinhe a cabeça à frente da base e confirme o zero do pan.";
                     return;
                 }
+                if (!ImuAllowsScanStart)
+                {
+                    scannerCommandStatus = "GY-25: mantenha a cabeça parada e refaça a referência antes de capturar.";
+                    return;
+                }
                 if (status.isScanning || status.panParking || status.panMoving)
                 {
                     scannerCommandStatus = "Aguarde a parada da cabeça antes de iniciar.";
@@ -632,7 +675,7 @@ namespace ArScanner.Network
 
         public void SendSetSpeed(float rpm)
         {
-            if (!IsFinite(rpm)) return;
+            if (!CanSetPanSpeed || !IsFinite(rpm)) return;
             float speed = Mathf.Clamp(rpm, 0.1f, 10.0f);
             byte[] command = new byte[5];
             command[0] = CMD_SET_SPEED;
@@ -704,13 +747,15 @@ namespace ArScanner.Network
                         IsFinite(value.panDegrees) && IsFinite(value.lidarRpm))
                     {
                         status = value;
-                        if (previousThermalSampleTime > 0f &&
-                            Time.unscaledTime > previousThermalSampleTime &&
-                            value.thermalFrames >= previousThermalFrames)
-                            thermalFramesPerSecond = (value.thermalFrames-previousThermalFrames) /
-                                (Time.unscaledTime-previousThermalSampleTime);
+                        thermalFramesPerSecond = hasPreviousThermalStatus &&
+                            TryCalculateThermalFrameRate(previousThermalTimestampMs, previousThermalFrames,
+                                value.timestampMs, value.thermalFrames, out float measuredRate) ? measuredRate : 0f;
+                        if (value.diagnosticVersion >= 14 && value.thermalFrameRateWindowMs >= 500 &&
+                            IsFinite(value.thermalFrameRateHz) && value.thermalFrameRateHz >= 0f)
+                            thermalFramesPerSecond = value.thermalFrameRateHz;
                         previousThermalFrames = value.thermalFrames;
-                        previousThermalSampleTime = Time.unscaledTime;
+                        previousThermalTimestampMs = value.timestampMs;
+                        hasPreviousThermalStatus = true;
                         if (value.diagnosticVersion >= 2) panEnabled = value.panEnabled;
                         statusReceivedTime = Time.unscaledTime;
                         statusHttpMessage = $"HTTP OK :8889 — firmware diagnóstico v{value.diagnosticVersion}";
@@ -730,6 +775,18 @@ namespace ArScanner.Network
             statusRequest.Dispose();
             statusRequest = null;
             statusCoroutine = null;
+        }
+
+        public static bool TryCalculateThermalFrameRate(uint previousMs, uint previousFrames,
+            uint currentMs, uint currentFrames, out float framesPerSecond)
+        {
+            framesPerSecond = 0f;
+            uint elapsedMs = unchecked(currentMs-previousMs);
+            // Reject duplicate timestamps, reset clocks and long gaps; HTTP
+            // arrival intervals are unrelated to the sensor's acquisition rate.
+            if (elapsedMs == 0 || elapsedMs > 10000 || currentFrames < previousFrames) return false;
+            framesPerSecond = (currentFrames-previousFrames)*1000f/elapsedMs;
+            return IsFinite(framesPerSecond);
         }
 
         private void AppendScannerDiagnostic()
@@ -765,6 +822,98 @@ namespace ArScanner.Network
         }
         public void RequestGeometry() => RequestDiagnostic(false);
         public void DownloadScanCsv() => RequestDiagnostic(true);
+
+        public void RequestImuOrientationReference()
+        {
+            if (!CanReferenceImuOrientation) return;
+            BeginImuOrientationRequest("imu/orientation/reference", "Referência GY-25: mantenha a cabeça parada por 3 segundos.");
+        }
+
+        public void RequestImuOrientationMode(bool enabled)
+        {
+            if (!CanSetPanSpeed || status.diagnosticVersion < 14 || (enabled && !HasUsableImuOrientation)) return;
+            BeginImuOrientationRequest("imu/orientation/mode?enabled="+(enabled ? "1" : "0"),
+                enabled ? "Habilitando acompanhamento GY-25..." : "Desligando acompanhamento GY-25...");
+        }
+
+        public void RequestThermalFrameRate(int framesPerSecond)
+        {
+            if (!CanSetPanSpeed || status.diagnosticVersion < 14 || (framesPerSecond != 4 && framesPerSecond != 8)) return;
+            BeginImuOrientationRequest("thermal/frame-rate?fps="+framesPerSecond,
+                "Ajustando a taxa da câmera térmica...", false);
+        }
+
+        private void BeginImuOrientationRequest(string route, string message, bool imu = true)
+        {
+            if (!isActiveAndEnabled) return;
+            CancelStatusRequest();
+            CancelCameraRequest();
+            try
+            {
+                diagnosticRequest = new UnityWebRequest($"http://{scannerIp}:8889/{route}", "POST")
+                    { downloadHandler = new DownloadHandlerBuffer(), timeout = 3 };
+                var operation = diagnosticRequest.SendWebRequest();
+                calibrationStatus = message;
+                diagnosticCoroutine = StartCoroutine(FinishImuOrientationRequest(operation, imu));
+            }
+            catch (Exception ex)
+            {
+                CancelDiagnosticRequest();
+                calibrationStatus = "GY-25: " + ex.Message;
+            }
+        }
+
+        private IEnumerator FinishImuOrientationRequest(UnityWebRequestAsyncOperation operation, bool imu)
+        {
+            try
+            {
+                yield return operation;
+                if (diagnosticRequest.result != UnityWebRequest.Result.Success)
+                {
+                    calibrationStatus = $"{(imu ? "GY-25" : "Térmica")}: HTTP {diagnosticRequest.responseCode}. {diagnosticRequest.downloadHandler?.text}";
+                    yield break;
+                }
+                try
+                {
+                    if (imu)
+                    {
+                        var response = JsonUtility.FromJson<ImuOrientationResponse>(diagnosticRequest.downloadHandler.text);
+                        if (response == null || string.IsNullOrEmpty(response.imuOrientationState))
+                            throw new InvalidDataException("Resposta GY-25 incompleta.");
+                        calibrationStatus = response.imuOrientationState == "reference_collecting"
+                            ? "GY-25 coletando referência. Mantenha a cabeça parada por 3 segundos."
+                            : response.imuOrientationEnabled ? "GY-25 acompanhando o giro; direção inicial preservada."
+                            : "Acompanhamento GY-25 desligado.";
+                    }
+                    else
+                    {
+                        var response = JsonUtility.FromJson<ThermalFrameRateResponse>(diagnosticRequest.downloadHandler.text);
+                        if (response == null || (response.thermalTargetFrameRateHz != 4 && response.thermalTargetFrameRateHz != 8))
+                            throw new InvalidDataException("Resposta da taxa térmica incompleta.");
+                        calibrationStatus = $"Térmica: solicitado {response.thermalRequestedFrameRateHz} quadros/s; alvo atual {response.thermalTargetFrameRateHz}.";
+                    }
+                    // A POST acknowledgement is not an orientation sample.
+                    statusReceivedTime = -100f;
+                    nextStatusTime = 0f;
+                }
+                catch (Exception ex) { calibrationStatus = (imu ? "GY-25: " : "Térmica: ") + ex.Message; }
+            }
+            finally
+            {
+                diagnosticRequest?.Dispose();
+                diagnosticRequest = null;
+                diagnosticCoroutine = null;
+            }
+        }
+
+        private void CancelStatusRequest()
+        {
+            if (statusCoroutine != null) StopCoroutine(statusCoroutine);
+            statusCoroutine = null;
+            statusRequest?.Abort();
+            statusRequest?.Dispose();
+            statusRequest = null;
+        }
 
         public void RequestThermalOrientation(int profile)
         {

@@ -15,9 +15,12 @@ void ThermalSensor::loadOrientationProfile() {
     int saved = prefs.isKey("thermal_dir")
         ? prefs.getInt("thermal_dir", THERMAL_ORIENTATION_PROFILE_DEFAULT)
         : THERMAL_ORIENTATION_PROFILE_DEFAULT;
+    int savedFps = prefs.getInt("thermal_fps", 4);
     prefs.end();
     if (saved >= 0 && saved <= 3)
         orientationProfile = (uint8_t)saved;
+    requestedFullFps = savedFps == 8 ? 8 : 4;
+    refreshHz = uint8_t(requestedFullFps * 2);
     Serial.printf("[TERMICA] Perfil de orientacao: %u (-X/+X, espelho horizontal).\n",
                   (unsigned)orientationProfile);
 }
@@ -51,11 +54,13 @@ bool ThermalSensor::begin() {
     for (uint8_t attempt = 0; attempt < 2; ++attempt) {
         Wire.setClock(i2cHz); // The probe must use the same speed as initialization.
         portENTER_CRITICAL(&frameMux);
-        diagnostic.refreshHz = fastMode ? 8 : 4;
+        diagnostic.refreshHz = refreshHz;
+        diagnostic.requestedFrameRateHz = requestedFullFps;
+        diagnostic.targetFrameRateHz = refreshHz / 2;
         diagnostic.i2cHz = i2cHz;
         portEXIT_CRITICAL(&frameMux);
         Wire.beginTransmission(0x33);
-        int error = Wire.endTransmission() == 0 ? mlx.begin(Wire, fastMode ? 4 : 3) : -102;
+        int error = Wire.endTransmission() == 0 ? mlx.begin(Wire, refreshCode()) : -102;
         int rawError = error == -102 ? -1 : mlx.rawError();
         if (!error) break;
         // These wrappers can report a failed read while loading/calibration
@@ -79,12 +84,12 @@ bool ThermalSensor::begin() {
                 error, rawError);
             return false;
         }
-        fastMode = false;
+        refreshHz = 4;
         i2cHz = I2C_FREQ;
         Serial.printf("[TERMICA] Transporte falhou na inicializacao: erro=%d raw=%d; uma tentativa a 100 kHz, 4 subpaginas/s.\n",
             error, rawError);
     }
-    assembler.setDeadline(fastMode ? 500 : 900);
+    assembler.setDeadline(pairDeadlineMs());
     failedReads = 0;
     overrunStreak = 0;
     lastSubpageMs = lastTimeoutMs = lastCompleteMs = millis();
@@ -92,15 +97,19 @@ bool ThermalSensor::begin() {
     lastError = 0;
     diagnostic.rawError = 0;
     diagnostic.state = "waiting_subpage";
-    diagnostic.refreshHz = fastMode ? 8 : 4;
+    diagnostic.refreshHz = refreshHz;
+    diagnostic.requestedFrameRateHz = requestedFullFps;
+    diagnostic.targetFrameRateHz = refreshHz / 2;
     diagnostic.i2cHz = i2cHz;
     diagnostic.partialCalibration = mlx.partialCalibration();
     diagnostic.maskedPixels = mlx.maskedPixelCount();
     diagnostic.calibrationWarning = mlx.calibrationWarning();
     initialized = true;
     portEXIT_CRITICAL(&frameMux);
-    Serial.printf("[TERMICA] Aquisicao v10 pronta: %d subpaginas/s (%d quadros/s), I2C %lu Hz; prazo par=%d ms; parcial=%d pixels_excluidos=%u aviso_calibracao=%d.\n",
-        fastMode ? 8 : 4, fastMode ? 4 : 2, (unsigned long)i2cHz, fastMode ? 500 : 900,
+    resetRateWindow();
+    Serial.printf("[TERMICA] Aquisicao pronta: %u subpaginas/s (%u quadros/s), solicitado=%u fps, I2C %lu Hz; prazo par=%lu ms; parcial=%d pixels_excluidos=%u aviso_calibracao=%d.\n",
+        (unsigned)refreshHz, (unsigned)(refreshHz / 2), (unsigned)requestedFullFps,
+        (unsigned long)i2cHz, (unsigned long)pairDeadlineMs(),
         mlx.partialCalibration(), (unsigned)mlx.maskedPixelCount(), mlx.calibrationWarning());
     return true;
 }
@@ -122,19 +131,22 @@ void ThermalSensor::setError(const char *state, int error, int rawError) {
 }
 
 bool ThermalSensor::reduceRate(bool busError) {
-    if (!fastMode) return true;
-    fastMode = false;
+    if (refreshHz <= 4 && (!busError || i2cHz == I2C_FREQ)) return true;
+    refreshHz = busError ? 4 : refreshHz >= 16 ? 8 : 4;
     // A RAM overrun means transfer timing, not proof of an electrical fault.
     // Reduce sensor rate without slowing I2C. Only transport errors slow I2C.
     if (busError) i2cHz = I2C_FREQ;
     Wire.setClock(i2cHz);
-    int error = mlx.setRefreshRate(3);
+    int error = mlx.setRefreshRate(refreshCode());
     discardPartial();
-    assembler.setDeadline(900);
+    assembler.setDeadline(pairDeadlineMs());
     portENTER_CRITICAL(&frameMux);
-    diagnostic.refreshHz = 4;
+    diagnostic.refreshHz = refreshHz;
+    diagnostic.targetFrameRateHz = refreshHz / 2;
     diagnostic.i2cHz = i2cHz;
     portEXIT_CRITICAL(&frameMux);
+    resetRateWindow();
+    overrunStreak = 0;
     if (error) {
         portENTER_CRITICAL(&frameMux);
         initialized = false;
@@ -142,9 +154,55 @@ bool ThermalSensor::reduceRate(bool busError) {
         setError("i2c_error", error, mlx.rawError());
         return false;
     }
-    Serial.printf("[TERMICA] %s: 4 subpaginas/s, I2C %lu Hz; quadros parciais descartados.\n",
+    Serial.printf("[TERMICA] %s: %u subpaginas/s, I2C %lu Hz; quadros parciais descartados.\n",
         busError ? "Erros de transporte I2C" : "Subpagina mudou durante leitura RAM",
-        (unsigned long)i2cHz);
+        (unsigned)refreshHz, (unsigned long)i2cHz);
+    return true;
+}
+
+void ThermalSensor::resetRateWindow() {
+    portENTER_CRITICAL(&frameMux);
+    rateWindowStartedMs = millis();
+    rateWindowFrames = frameCount;
+    diagnostic.measuredFrameRateHz = 0;
+    diagnostic.frameRateWindowMs = 0;
+    portEXIT_CRITICAL(&frameMux);
+}
+
+bool ThermalSensor::requestFrameRate(uint8_t fullFps) {
+    if (fullFps != 4 && fullFps != 8) return false;
+    if (fullFps == requestedFullFps && refreshHz == fullFps * 2 &&
+        i2cHz == I2C_FAST_FREQ && isInitialized()) return true;
+    requestedFullFps = fullFps;
+    refreshHz = uint8_t(fullFps * 2);
+    i2cHz = I2C_FAST_FREQ;
+    Wire.setClock(i2cHz);
+    discardPartial();
+    assembler.setDeadline(pairDeadlineMs());
+    portENTER_CRITICAL(&frameMux);
+    frameValid = false; // Never present the old-rate snapshot as a new frame.
+    diagnostic.refreshHz = refreshHz;
+    diagnostic.requestedFrameRateHz = requestedFullFps;
+    diagnostic.targetFrameRateHz = fullFps;
+    portEXIT_CRITICAL(&frameMux);
+    resetRateWindow();
+    int error = isInitialized() ? mlx.setRefreshRate(refreshCode()) : 0;
+    if (error) {
+        portENTER_CRITICAL(&frameMux);
+        initialized = false;
+        portEXIT_CRITICAL(&frameMux);
+        setError("i2c_error", error, mlx.rawError());
+        return false;
+    }
+    failedReads = overrunStreak = 0;
+    lastSubpageMs = lastTimeoutMs = lastCompleteMs = millis();
+    Preferences prefs;
+    if (prefs.begin("arscanner", false)) {
+        prefs.putInt("thermal_fps", fullFps);
+        prefs.end();
+    }
+    Serial.printf("[TERMICA] Solicitados %u quadros completos/s (%u subpaginas/s).\n",
+        (unsigned)fullFps, (unsigned)refreshHz);
     return true;
 }
 
@@ -206,14 +264,14 @@ bool ThermalSensor::updateFrame() {
         setError(transport ? "i2c_error" : error == -8 ? "frame_overrun" :
             error == ThermalAcquisition::InvalidConfiguration ? "invalid_configuration" : "invalid_frame", error, mlx.rawError());
         if (transport) {
-            if (++failedReads >= 3 && fastMode) reduceRate(true);
+            if (++failedReads >= 3 && (refreshHz > 4 || i2cHz != I2C_FREQ)) reduceRate(true);
             if (failedReads >= 5) {
                 portENTER_CRITICAL(&frameMux);
                 initialized = false;
                 portEXIT_CRITICAL(&frameMux);
             }
         } else if (error == -8) {
-            if (++overrunStreak >= 3 && fastMode) reduceRate(false);
+            if (++overrunStreak >= 3 && refreshHz > 4) reduceRate(false);
         } else if (++failedReads >= 5) {
             portENTER_CRITICAL(&frameMux);
             initialized = false;
@@ -254,6 +312,13 @@ bool ThermalSensor::updateFrame() {
     lastError = 0;
     ++frameCount;
     lastCompleteMs = millis();
+    uint32_t rateElapsed = uint32_t(lastCompleteMs - rateWindowStartedMs);
+    if (rateElapsed >= 2000) {
+        diagnostic.measuredFrameRateHz = float(frameCount - rateWindowFrames) * 1000.0f / float(rateElapsed);
+        diagnostic.frameRateWindowMs = rateElapsed;
+        rateWindowStartedMs = lastCompleteMs;
+        rateWindowFrames = frameCount;
+    }
     diagnostic.frameSpanMs = span;
     diagnostic.state = diagnostic.partialCalibration ? "ready_partial" : "ready";
     portEXIT_CRITICAL(&frameMux);
@@ -272,6 +337,7 @@ ThermalAcquisitionHealth ThermalSensor::acquisitionHealth() {
     portENTER_CRITICAL(&frameMux);
     ThermalAcquisitionHealth result = diagnostic;
     result.frameReady = frameValid && uint32_t(millis() - frameTimestampMs) <= MAX_FRAME_AGE_MS;
+    if (!result.frameReady) result.measuredFrameRateHz = 0;
     if (frameValid && !result.frameReady && lastError == 0) result.state = "stale";
     portEXIT_CRITICAL(&frameMux);
     return result;

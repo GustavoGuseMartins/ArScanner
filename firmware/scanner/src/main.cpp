@@ -47,6 +47,7 @@ float latestRoll = 0.0f;
 uint32_t latestAttitudeUs = 0;
 ImuRawData latestImuRaw = {};
 ImuHealth statusImuHealth;
+ImuOrientationSnapshot statusImuOrientation;
 UwbTagDiagnostics statusTag;
 LidarDiagnostics statusLidarDiagnostics;
 volatile uint32_t poseDropCount = 0;
@@ -62,6 +63,9 @@ float statusStepperRpm = 2.0f;
 uint8_t statusLidarPwm = 160;
 int statusScanMode = 0;
 bool statusImuAck = false, statusThermalAck = false;
+volatile bool imuOrientationReferenceRequest = false;
+volatile int8_t imuOrientationModeRequest = -1;
+volatile uint8_t thermalFrameRateRequest = 0;
 static ScanTrace<1024> scanTrace;
 portMUX_TYPE traceMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -105,6 +109,25 @@ void TaskAuxSensorsCore1(void *pvParameters) {
             roll = imu.getRoll();
             raw = imu.getRawAxes();
         }
+        // The Aux task is the sole owner of the shared I2C bus. HTTP only sets
+        // these requests; applying them here prevents a concurrent Wire call.
+        bool referenceRequest = false;
+        int8_t orientationMode = -1;
+        uint8_t frameRateRequest = 0;
+        float orientationPan = 0;
+        portENTER_CRITICAL(&attitudeMux);
+        referenceRequest = imuOrientationReferenceRequest;
+        imuOrientationReferenceRequest = false;
+        orientationMode = imuOrientationModeRequest;
+        imuOrientationModeRequest = -1;
+        frameRateRequest = thermalFrameRateRequest;
+        thermalFrameRateRequest = 0;
+        orientationPan = statusPanDeg;
+        portEXIT_CRITICAL(&attitudeMux);
+        if (referenceRequest) imu.requestOrientationReference(orientationPan);
+        if (orientationMode >= 0) imu.setOrientationEnabled(orientationMode != 0);
+        if (frameRateRequest) thermal.requestFrameRate(frameRateRequest);
+        if (imuSampleUpdated) imu.updateOrientation(orientationPan);
         // Publish sample and health atomically; HTTP never reads the mutable
         // I2C driver from the other core.
         ImuHealth imuHealth = imu.getHealth();
@@ -116,6 +139,7 @@ void TaskAuxSensorsCore1(void *pvParameters) {
             latestAttitudeUs = micros();
         }
         statusImuHealth = imuHealth;
+        statusImuOrientation = imu.getOrientation();
         portEXIT_CRITICAL(&attitudeMux);
 
         // Prévia também disponível em standby, sem ligar os motores.
@@ -128,7 +152,7 @@ void TaskAuxSensorsCore1(void *pvParameters) {
             portENTER_CRITICAL(&attitudeMux);
             uint32_t imuAgeMs = latestAttitudeUs ? uint32_t(micros()-latestAttitudeUs)/1000U : UINT32_MAX;
             portEXIT_CRITICAL(&attitudeMux);
-            Serial.printf("[IMU] v11 estado=%s pronta=%d identidade=%d bias=%d tilt=%d tentativas=%lu erros_leitura=%lu idade_ms=%lu\n",
+            Serial.printf("[IMU] v14 estado=%s pronta=%d identidade=%d bias=%d tilt=%d tentativas=%lu erros_leitura=%lu idade_ms=%lu\n",
                 imuHealth.state,imuHealth.ready,(int)imuHealth.identity,imuHealth.biasCalibrated,
                 IMU_APPLY_TILT,(unsigned long)imuHealth.initAttempts,
                 (unsigned long)imuHealth.readErrors,(unsigned long)imuAgeMs);
@@ -141,14 +165,15 @@ void TaskAuxSensorsCore1(void *pvParameters) {
             int error; uint32_t frames, age;
             thermal.health(error, frames, age);
             auto acquisition = thermal.acquisitionHealth();
-            Serial.printf("[TERMICA] v10 estado=%s frame=%d quadros=%lu idade_ms=%lu mask=%u dup=%lu timeout=%lu i2c_erros=%lu overruns=%lu erro=%d raw=%d leitura_ms=%lu span_ms=%lu parcial=%d pixels_excluidos=%u aviso_calibracao=%d\n",
+            Serial.printf("[TERMICA] v14 estado=%s frame=%d quadros=%lu idade_ms=%lu mask=%u dup=%lu timeout=%lu i2c_erros=%lu overruns=%lu erro=%d raw=%d leitura_ms=%lu span_ms=%lu parcial=%d pixels_excluidos=%u aviso_calibracao=%d fps=%.2f alvo=%u\n",
                 acquisition.state, acquisition.frameReady, (unsigned long)frames, (unsigned long)age,
                 (unsigned)acquisition.subpageMask, (unsigned long)acquisition.duplicateSubpages,
                 (unsigned long)acquisition.frameTimeouts, (unsigned long)acquisition.readErrors,
                 (unsigned long)acquisition.overruns, error, acquisition.rawError,
                 (unsigned long)acquisition.readDurationMs, (unsigned long)acquisition.frameSpanMs,
                 acquisition.partialCalibration, (unsigned)acquisition.maskedPixels,
-                acquisition.calibrationWarning);
+                acquisition.calibrationWarning, acquisition.measuredFrameRateHz,
+                (unsigned)acquisition.targetFrameRateHz);
 #if THERMAL_SERIAL_FRAME_DIAGNOSTIC
             static bool emitted = false;
             uint8_t payload[872];
@@ -286,8 +311,23 @@ void TaskSensorCore1(void *pvParameters) {
         float dronePitch = latestPitch;
         float droneRoll = latestRoll;
         uint32_t attitudeUs = latestAttitudeUs;
+        ImuOrientationSnapshot orientation = statusImuOrientation;
         portEXIT_CRITICAL(&attitudeMux);
         if (!IMU_APPLY_TILT) dronePitch = droneRoll = 0.0f;
+
+        // In the opt-in GY-25 mode the integrated head yaw replaces the
+        // mechanical pan angle. At the reference pose both are equal, so this
+        // is also the exact base-rotation correction without double counting.
+        if (scanning && orientation.enabled &&
+            (!orientation.referenceValid || orientation.state != "ready" ||
+             orientation.ageMs > 150 || orientation.gaps != 0)) {
+            Serial.println("[IMU] Orientacao GY-25 perdeu validade; captura interrompida.");
+            isScanningActive = false;
+            scanning = false;
+            stepper.setRunning(false);
+            lidar.stopMotor();
+            motorRunning = false;
+        }
 
         // Operação ativa: somente executa passos do motor e leitura do LiDAR se o scan estiver ativo
         if (scanning) {
@@ -300,6 +340,14 @@ void TaskSensorCore1(void *pvParameters) {
                      abs((int32_t)(measurement.sampleTimeUs-attitudeUs)) > 20000))) {
                     ++poseDropCount;
                     continue;
+                }
+                if (orientation.enabled) {
+                    if (!orientation.referenceValid || orientation.state != "ready" ||
+                        orientation.ageMs > 150 || orientation.gaps != 0) {
+                        ++poseDropCount;
+                        continue;
+                    }
+                    currentBaseAngle = orientation.relativeHeadYawDeg;
                 }
                 using namespace ScanGeometry;
                 auto headDebug = inHeadDebug(measurement.distanceMm*0.001f,
@@ -603,6 +651,7 @@ void TaskCameraHttpCore0(void *pvParameters) {
             auto lidarDiagnostics = statusLidarDiagnostics;
             ImuRawData imuRaw = latestImuRaw;
             ImuHealth imuHealth = statusImuHealth;
+            ImuOrientationSnapshot imuOrientation = statusImuOrientation;
             uint32_t imuAgeMs = latestAttitudeUs ? (uint32_t)(micros()-latestAttitudeUs)/1000U : UINT32_MAX;
             portEXIT_CRITICAL(&attitudeMux);
             int thermalError;
@@ -611,11 +660,11 @@ void TaskCameraHttpCore0(void *pvParameters) {
             auto thermalAcquisition = thermal.acquisitionHealth();
             // Only this HTTP task owns the buffer. Keep it off the task stack:
             // the thermal preview also needs a 768-float normalization snapshot.
-            static char body[4096];
+            static char body[8192];
             int length = snprintf(body, sizeof(body),
                 "{\"lidarRpm\":%.2f,\"panDegrees\":%.3f,\"stepsPerRevolution\":%d,"
                 "\"timestampMs\":%lu,\"poseDrops\":%lu,\"imuCalibrated\":%s,\"encoder\":false,"
-                "\"diagnosticVersion\":12,\"panEnabled\":%s,\"rgbReady\":%s,\"thermalReady\":%s,"
+                "\"diagnosticVersion\":14,\"panEnabled\":%s,\"rgbReady\":%s,\"thermalReady\":%s,"
                 "\"imuReady\":%s,\"tagReady\":%s,\"thermalError\":%d,\"thermalFrames\":%lu,"
                 "\"thermalAgeMs\":%lu,\"thermalFusedPoints\":%lu,"
                 "\"rgbMessage\":\"%s\",\"tagEnabled\":%s,\"rgbProfile\":%d,"
@@ -625,6 +674,14 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 "\"imuSampleIntervalUs\":%lu,\"imuIntegrationGaps\":%lu,"
                 "\"imuState\":\"%s\",\"imuIdentity\":%d,\"imuInitAttempts\":%lu,\"imuReadErrors\":%lu,"
                 "\"imuBiasCalibrated\":%s,\"imuTiltApplied\":%s,"
+                "\"imuOrientationState\":\"%s\",\"imuOrientationReferenceValid\":%s,"
+                "\"imuOrientationEnabled\":%s,\"imuOrientationStationary\":%s,"
+                "\"imuGravityValid\":%s,\"imuOrientationGeneration\":%lu,"
+                "\"imuOrientationAgeMs\":%lu,\"imuOrientationGaps\":%lu,"
+                "\"imuStationaryMs\":%lu,\"imuRelativeHeadYawDeg\":%.3f,"
+                "\"imuRelativeBaseYawDeg\":%.3f,\"imuPitchDeg\":%.3f,\"imuRollDeg\":%.3f,"
+                "\"imuYawUncertaintyDeg\":%.3f,\"imuBaseQw\":%.6f,\"imuBaseQx\":%.6f,"
+                "\"imuBaseQy\":%.6f,\"imuBaseQz\":%.6f,"
                 "\"lidarWeakSamples\":%lu,\"lidarValidSamples\":%lu,\"lidarInvalidSamples\":%lu,\"lidarChecksumErrors\":%lu,"
                 "\"isScanning\":%s,\"panParking\":%s,\"stepperRpm\":%.2f,\"lidarPwm\":%u,\"scanMode\":%d,"
                 "\"imuI2cAck\":%s,\"thermalI2cAck\":%s,"
@@ -639,7 +696,9 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 "\"thermalOverruns\":%lu,\"thermalInvalidFrames\":%lu,\"thermalLastSubpage\":%d,"
                 "\"thermalRefreshHz\":%u,\"thermalI2cHz\":%lu,\"thermalReadDurationMs\":%lu,"
                 "\"thermalFrameSpanMs\":%lu,\"thermalRawError\":%d,"
-                "\"thermalPartialCalibration\":%s,\"thermalMaskedPixels\":%u,\"thermalCalibrationWarning\":%d}",
+                "\"thermalPartialCalibration\":%s,\"thermalMaskedPixels\":%u,\"thermalCalibrationWarning\":%d,"
+                "\"thermalRequestedFrameRateHz\":%u,\"thermalTargetFrameRateHz\":%u,"
+                "\"thermalFrameRateHz\":%.3f,\"thermalFrameRateWindowMs\":%lu}",
                 rpm,pan,STEPS_PER_REV,(unsigned long)updated,(unsigned long)poseDropCount,
                 IMU_APPLY_TILT ? "true" : "false", panEnabled ? "true" : "false",
                 camera.isInitialized() ? "true" : "false", thermal.isInitialized() ? "true" : "false",
@@ -654,6 +713,18 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 imuHealth.state,(int)imuHealth.identity,(unsigned long)imuHealth.initAttempts,
                 (unsigned long)imuHealth.readErrors,imuHealth.biasCalibrated ? "true" : "false",
                 IMU_APPLY_TILT ? "true" : "false",
+                imuOrientation.state,
+                imuOrientation.referenceValid ? "true" : "false",
+                imuOrientation.enabled ? "true" : "false",
+                imuOrientation.stationary ? "true" : "false",
+                imuOrientation.gravityValid ? "true" : "false",
+                (unsigned long)imuOrientation.generation,
+                (unsigned long)imuOrientation.ageMs,
+                (unsigned long)imuOrientation.gaps,
+                (unsigned long)imuOrientation.stationaryMs,
+                imuOrientation.relativeHeadYawDeg, imuOrientation.relativeBaseYawDeg,
+                imuOrientation.pitchDeg, imuOrientation.rollDeg, imuOrientation.yawUncertaintyDeg,
+                imuOrientation.qw, imuOrientation.qx, imuOrientation.qy, imuOrientation.qz,
                 (unsigned long)lidarDiagnostics.weakSamples,(unsigned long)lidarDiagnostics.validSamples,
                 (unsigned long)lidarDiagnostics.invalidSamples,(unsigned long)lidarDiagnostics.checksumErrors,
                 isScanningActive ? "true" : "false",parking ? "true" : "false",stepperRpm,lidarPwm,scanMode,
@@ -677,7 +748,11 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 (unsigned long)thermalAcquisition.readDurationMs,
                 (unsigned long)thermalAcquisition.frameSpanMs, thermalAcquisition.rawError,
                 thermalAcquisition.partialCalibration ? "true" : "false",
-                (unsigned)thermalAcquisition.maskedPixels, thermalAcquisition.calibrationWarning);
+                (unsigned)thermalAcquisition.maskedPixels, thermalAcquisition.calibrationWarning,
+                (unsigned)thermalAcquisition.requestedFrameRateHz,
+                (unsigned)thermalAcquisition.targetFrameRateHz,
+                thermalAcquisition.measuredFrameRateHz,
+                (unsigned long)thermalAcquisition.frameRateWindowMs);
             if (length < 0 || (size_t)length >= sizeof(body)) {
                 sendHttpError(client,"500 Internal Server Error","Status excedeu o buffer.");
                 client.stop();
@@ -767,6 +842,55 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 sendHttpHeaders(client,"200 OK","application/json",length);
                 client.write((const uint8_t*)body,length);
             }
+        } else if (path == "/imu/orientation/reference" || path == "/imu/orientation/mode") {
+            if (!isPost) {
+                sendHttpError(client,"405 Method Not Allowed","Use POST para controlar a referencia GY-25.");
+            } else if (isScanningActive || statusParking || statusPanMoving) {
+                sendHttpError(client,"409 Conflict","Pare o scanner e mantenha o pan parado antes de alterar a referencia GY-25.");
+            } else if (!statusImuHealth.ready || !statusImuHealth.biasCalibrated || !statusPanReferenceValid) {
+                sendHttpError(client,"409 Conflict","GY-25 ou zero do pan ainda nao estao prontos.");
+            } else if (path == "/imu/orientation/reference") {
+                portENTER_CRITICAL(&attitudeMux);
+                imuOrientationReferenceRequest = true;
+                portEXIT_CRITICAL(&attitudeMux);
+                const char *body = "{\"imuOrientationState\":\"reference_collecting\"}";
+                sendHttpHeaders(client,"202 Accepted","application/json",strlen(body));
+                client.print(body);
+            } else if (arguments != "enabled=0" && arguments != "enabled=1") {
+                sendHttpError(client,"400 Bad Request","Use enabled=0 ou enabled=1.");
+            } else if (arguments == "enabled=1" && !statusImuOrientation.referenceValid) {
+                sendHttpError(client,"409 Conflict","Colete a referencia GY-25 antes de habilitar o acompanhamento.");
+            } else {
+                portENTER_CRITICAL(&attitudeMux);
+                imuOrientationModeRequest = arguments == "enabled=1" ? 1 : 0;
+                portEXIT_CRITICAL(&attitudeMux);
+                const char *body = arguments == "enabled=1"
+                    ? "{\"imuOrientationState\":\"enabling\"}"
+                    : "{\"imuOrientationState\":\"disabling\"}";
+                sendHttpHeaders(client,"202 Accepted","application/json",strlen(body));
+                client.print(body);
+            }
+        } else if (path == "/thermal/frame-rate") {
+            if (!isPost) {
+                sendHttpError(client,"405 Method Not Allowed","Use POST /thermal/frame-rate?fps=4 ou fps=8.");
+            } else if (isScanningActive || statusParking || statusPanMoving) {
+                sendHttpError(client,"409 Conflict","Pare o scanner antes de mudar a taxa termica.");
+            } else if (arguments != "fps=4" && arguments != "fps=8") {
+                sendHttpError(client,"400 Bad Request","Taxa esperada: fps=4 ou fps=8.");
+            } else {
+                uint8_t requested = arguments == "fps=8" ? 8 : 4;
+                portENTER_CRITICAL(&attitudeMux);
+                thermalFrameRateRequest = requested;
+                portEXIT_CRITICAL(&attitudeMux);
+                auto acquisition = thermal.acquisitionHealth();
+                char body[192];
+                int length = snprintf(body,sizeof(body),
+                    "{\"thermalRequestedFrameRateHz\":%u,\"thermalTargetFrameRateHz\":%u,\"thermalFrameRateHz\":%.3f}",
+                    (unsigned)requested,(unsigned)acquisition.targetFrameRateHz,
+                    acquisition.measuredFrameRateHz);
+                sendHttpHeaders(client,"202 Accepted","application/json",length);
+                client.write((const uint8_t*)body,length);
+            }
         } else if (path == "/geometry") {
             char body[1024];
             int length = snprintf(body, sizeof(body),
@@ -801,7 +925,7 @@ void TaskCameraHttpCore0(void *pvParameters) {
             sendHttpHeaders(client, "200 OK", "application/json", length);
             client.write((const uint8_t*)body, length);
         } else {
-            sendHttpError(client, "404 Not Found", "Use /status, /scan.csv, /geometry, /rgb, /thermal ou POST /thermal/orientation.");
+            sendHttpError(client, "404 Not Found", "Use /status, /scan.csv, /geometry, /rgb, /thermal ou POST /thermal/orientation, /imu/orientation/* ou /thermal/frame-rate.");
         }
         client.stop();
         vTaskDelay(pdMS_TO_TICKS(2));
