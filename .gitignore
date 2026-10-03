@@ -37,3 +37,16 @@ ExportedObj/
 # Gradle / Android
 .gradle/
 .utmp/
+
+# PlatformIO: dependências e resultados locais de compilação
+**/.pio/
+
+# Diagnósticos e ferramentas locais de bancada
+/diagnostics/
+/tmp/
+/.vs/
+__pycache__/
+*.py[cod]
+*.log
+firmware/**/test/*.exe
+firmware/**/test/*.o

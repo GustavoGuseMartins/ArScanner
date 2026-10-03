@@ -1,0 +1,7 @@
+#pragma once
+#include "Arduino.h"
+#define I2C_FREQ 100000L
+#define I2C_FAST_FREQ 400000L
+#define THERMAL_ORIENTATION_PROFILE_DEFAULT 0
+#define THERMAL_SENSOR_FOV_X_DEG 110.f
+#define THERMAL_SENSOR_FOV_Y_DEG 75.f

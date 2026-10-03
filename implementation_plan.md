@@ -1,5 +1,7 @@
 # Plano de Implementação: Arquitetura Multissensorial, Otimização de Processamento e Visualização AR (TCC UEPG)
 
+> Este documento registra a proposta inicial, incluindo o EKF como meta. Para o fluxo realmente implementado, os limites observados no teste físico e a sequência de validação, consulte [Fluxo de medição UWB, LiDAR e térmica](docs/fluxo-medicao-uwb-pontos.md). O EKF ainda não foi implementado.
+
 **Autores:** Gustavo Guse Martins & Kevin Kurpias Rodrigues  
 **Orientador:** Jonathan de Matos  
 **Instituição:** Universidade Estadual de Ponta Grossa (UEPG) - Engenharia de Computação  
@@ -135,8 +137,22 @@ struct ScanPointPacket {
 
 ### Etapa 3: Atualização do Aplicativo Unity (`Assets/Scripts/`)
 * [MODIFY] `PointCloudTcpReceiver.cs`: Parsing dos pacotes agrupados.
-* [MODIFY] `ThermalPointCloudRenderer.cs`: Suporte ao modo Raio-X (paredes transparentes + destaque de calor) e integração do filtro planar.
-* [MODIFY] `ArScannerHUD.cs`: Controles de transparência de parede e alternância de modos de visualização.
+* [MODIFY] `ThermalPointCloudRenderer.cs`: Suporte ao modo Raio-X (paredes transparentes + destaque de calor), integração do filtro planar e adição de translucidez (opacidade) ajustável para a nuvem de pontos.
+* [MODIFY] `ArScannerHUD.cs`: Controles de transparência de parede, slider de opacidade da nuvem, alteração dos controles de "Pitch" e "Yaw" por sliders ("Rotação em X" e "Rotação em Y") e alternância de modos de visualização.
+
+### Etapa 4: Correções e Melhorias Solicitadas (Aprovação Pendente)
+1. **Posição Inicial (Homing/Parking):** Como o motor NEMA 14 (TMC2209) não possui encoder absoluto ou chave de fim de curso (*endstop*), não é possível referenciar a posição física global ao ligar a placa. *Solução Proposta*: Adicionar um comando de "Park/Home" no firmware. Ao parar o escaneamento, o motor de passo girará de volta para o ângulo relativo `0°` (posição em que foi ligado) e parará.
+2. **Integração UWB (Eixo Y):** Atualmente a posição local é manual. Vamos integrar os dados de distância do `UwbDataReceiver` no `UwbAnchorManager` para ajustar o deslocamento real (Y e Z) da posição da Tag UWB no drone em relação ao celular, definindo a posição global dos pontos.
+3. **Opacidade da Nuvem:** Adição de slider de controle (0 a 100%) no `ArScannerHUD.cs` para ajustar a cor/translucidez das partículas em `ThermalPointCloudRenderer.cs`.
+4. **Interface (Rotação X/Y):** Substituição dos botões fixos de +90° por sliders em `ArScannerHUD.cs`.
+5. **Correção das Câmeras (HTTP):** O parser do servidor web do ESP32-S3 (`TaskCameraHttpCore0` em `main.cpp`) está comparando a rota estritamente (`request == "GET /rgb HTTP/1.1"`). Será alterado para `request.startsWith("GET /rgb")` para suportar diferentes clientes (Unity, Browsers) que possam adicionar cabeçalhos ou parâmetros extras.
+
+## Open Questions
+
+> [!WARNING]
+> **Feedback Necessário:**
+> 1. Como não temos uma chave de fim de curso (endstop) no eixo do motor, a "posição inicial" será sempre baseada na posição em que o Scanner foi **ligado na energia** (ângulo relativo zero). Podemos fazer ele voltar para essa mesma posição sempre que pausar o scanner. Essa abordagem atende à sua expectativa?
+> 2. Você deseja testar e aprovar esse plano de implementação antes que eu inicie as modificações no código?
 
 ---
 

@@ -8,4 +8,5 @@ public static class GlobalData
 
     // Define se o visualizador iniciará com dados simulados (para testes sem o hardware pronto)
     public static bool IsSimulationMode = false;
+    public static bool HasViewerModeSelection = false;
 }

@@ -1,0 +1,2605 @@
+(export
+	(version "E")
+	(design
+		(source "C:\\Users\\aaata\\Documents\\KiCad\\10.0\\projects\\TCC\\tccc\\tcc\\tccvis\\tccvis.kicad_sch")
+		(date "2026-09-20T18:11:04")
+		(tool "Eeschema 10.0.2")
+		(sheet
+			(number "1")
+			(name "/")
+			(tstamps "/")
+			(title_block
+				(title)
+				(company)
+				(rev)
+				(date)
+				(source "tccvis.kicad_sch")
+				(comment
+					(number "1")
+					(value "")
+				)
+				(comment
+					(number "2")
+					(value "")
+				)
+				(comment
+					(number "3")
+					(value "")
+				)
+				(comment
+					(number "4")
+					(value "")
+				)
+				(comment
+					(number "5")
+					(value "")
+				)
+				(comment
+					(number "6")
+					(value "")
+				)
+				(comment
+					(number "7")
+					(value "")
+				)
+				(comment
+					(number "8")
+					(value "")
+				)
+				(comment
+					(number "9")
+					(value "")
+				)
+			)
+		)
+	)
+	(components
+		(comp
+			(ref "C1")
+			(value "100uF 16v")
+			(footprint "Capacitor_SMD:C_1210_3225Metric_Pad1.33x2.70mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_1210_3225Metric_Pad1.33x2.70mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "f9aee034-0205-4a3f-9bf1-228d6df0a06f")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "C2")
+			(value "100nF")
+			(footprint "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "dc21edfc-d9f2-4e90-9faa-a33470deb80f")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "C3")
+			(value "100nF")
+			(footprint "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "988d5f06-7f5b-406a-9a5d-f64c2641ab41")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "C4")
+			(value "100nF")
+			(footprint "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "02ce2cba-0f49-4db4-9b7a-7a11e2c8f25c")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "C5")
+			(value "10uF")
+			(footprint "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "46bf5f57-4c90-48d8-8378-adbb0534f959")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "C6")
+			(value "10uF")
+			(footprint "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "a78fa691-cdc2-4f3c-9c15-b6e43c097549")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "C7")
+			(value "10uF")
+			(footprint "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+			(description "Unpolarized capacitor")
+			(fields
+				(field
+					(name "Footprint") "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(libsource
+				(lib "Device")
+				(part "C")
+				(description "Unpolarized capacitor")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "cap capacitor")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "C_*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "aeb557da-badd-4d96-a485-df6ebfcc5e53")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "DWM2")
+			(value "DWM1000")
+			(footprint "RF_Module:DWM1000")
+			(datasheet "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+			(description "Ultra wide band RF module With ranging location capabilities")
+			(fields
+				(field
+					(name "Footprint") "RF_Module:DWM1000")
+				(field
+					(name "Datasheet") "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+				(field
+					(name "Description") "Ultra wide band RF module With ranging location capabilities")
+			)
+			(libsource
+				(lib "RF_Module")
+				(part "DWM1000")
+				(description "Ultra wide band RF module With ranging location capabilities")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "Decawave Qorvo UWB")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "*DWM1000*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "974094aa-710f-455d-a9f8-ff52d6169046")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+						(pin
+							(num "3")
+						)
+						(pin
+							(num "4")
+						)
+						(pin
+							(num "7")
+						)
+						(pin
+							(num "6")
+						)
+						(pin
+							(num "8")
+						)
+						(pin
+							(num "16")
+						)
+						(pin
+							(num "21")
+						)
+						(pin
+							(num "23")
+						)
+						(pin
+							(num "24")
+						)
+						(pin
+							(num "5")
+						)
+						(pin
+							(num "22")
+						)
+						(pin
+							(num "20")
+						)
+						(pin
+							(num "19")
+						)
+						(pin
+							(num "18")
+						)
+						(pin
+							(num "17")
+						)
+						(pin
+							(num "15")
+						)
+						(pin
+							(num "14")
+						)
+						(pin
+							(num "13")
+						)
+						(pin
+							(num "12")
+						)
+						(pin
+							(num "11")
+						)
+						(pin
+							(num "10")
+						)
+						(pin
+							(num "9")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "DWM3")
+			(value "DWM1000")
+			(footprint "RF_Module:DWM1000")
+			(datasheet "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+			(description "Ultra wide band RF module With ranging location capabilities")
+			(fields
+				(field
+					(name "Footprint") "RF_Module:DWM1000")
+				(field
+					(name "Datasheet") "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+				(field
+					(name "Description") "Ultra wide band RF module With ranging location capabilities")
+			)
+			(libsource
+				(lib "RF_Module")
+				(part "DWM1000")
+				(description "Ultra wide band RF module With ranging location capabilities")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "Decawave Qorvo UWB")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "*DWM1000*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "804bc3c0-d8b3-4145-8fe3-c572b6465127")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+						(pin
+							(num "3")
+						)
+						(pin
+							(num "4")
+						)
+						(pin
+							(num "7")
+						)
+						(pin
+							(num "6")
+						)
+						(pin
+							(num "8")
+						)
+						(pin
+							(num "16")
+						)
+						(pin
+							(num "21")
+						)
+						(pin
+							(num "23")
+						)
+						(pin
+							(num "24")
+						)
+						(pin
+							(num "5")
+						)
+						(pin
+							(num "22")
+						)
+						(pin
+							(num "20")
+						)
+						(pin
+							(num "19")
+						)
+						(pin
+							(num "18")
+						)
+						(pin
+							(num "17")
+						)
+						(pin
+							(num "15")
+						)
+						(pin
+							(num "14")
+						)
+						(pin
+							(num "13")
+						)
+						(pin
+							(num "12")
+						)
+						(pin
+							(num "11")
+						)
+						(pin
+							(num "10")
+						)
+						(pin
+							(num "9")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "DWM4")
+			(value "DWM1000")
+			(footprint "RF_Module:DWM1000")
+			(datasheet "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+			(description "Ultra wide band RF module With ranging location capabilities")
+			(fields
+				(field
+					(name "Footprint") "RF_Module:DWM1000")
+				(field
+					(name "Datasheet") "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+				(field
+					(name "Description") "Ultra wide band RF module With ranging location capabilities")
+			)
+			(libsource
+				(lib "RF_Module")
+				(part "DWM1000")
+				(description "Ultra wide band RF module With ranging location capabilities")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "ki_keywords")
+				(value "Decawave Qorvo UWB")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "*DWM1000*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "bb0fa126-5a0f-4c6f-9f00-88f0a7b2bdbd")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+						(pin
+							(num "3")
+						)
+						(pin
+							(num "4")
+						)
+						(pin
+							(num "7")
+						)
+						(pin
+							(num "6")
+						)
+						(pin
+							(num "8")
+						)
+						(pin
+							(num "16")
+						)
+						(pin
+							(num "21")
+						)
+						(pin
+							(num "23")
+						)
+						(pin
+							(num "24")
+						)
+						(pin
+							(num "5")
+						)
+						(pin
+							(num "22")
+						)
+						(pin
+							(num "20")
+						)
+						(pin
+							(num "19")
+						)
+						(pin
+							(num "18")
+						)
+						(pin
+							(num "17")
+						)
+						(pin
+							(num "15")
+						)
+						(pin
+							(num "14")
+						)
+						(pin
+							(num "13")
+						)
+						(pin
+							(num "12")
+						)
+						(pin
+							(num "11")
+						)
+						(pin
+							(num "10")
+						)
+						(pin
+							(num "9")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "H1")
+			(value "MountingHole_Pad")
+			(footprint "MountingHole:MountingHole_2.2mm_M2_Pad")
+			(description "Mounting Hole with connection")
+			(fields
+				(field
+					(name "Footprint") "MountingHole:MountingHole_2.2mm_M2_Pad")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Mounting Hole with connection")
+			)
+			(libsource
+				(lib "Mechanical")
+				(part "MountingHole_Pad")
+				(description "Mounting Hole with connection")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "exclude_from_bom")
+			)
+			(property
+				(name "ki_keywords")
+				(value "mounting hole")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "MountingHole*Pad*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "2eb951d5-ec66-4ad8-ab00-378c29357ee2")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "H2")
+			(value "MountingHole_Pad")
+			(footprint "MountingHole:MountingHole_2.2mm_M2_Pad")
+			(description "Mounting Hole with connection")
+			(fields
+				(field
+					(name "Footprint") "MountingHole:MountingHole_2.2mm_M2_Pad")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Mounting Hole with connection")
+			)
+			(libsource
+				(lib "Mechanical")
+				(part "MountingHole_Pad")
+				(description "Mounting Hole with connection")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "exclude_from_bom")
+			)
+			(property
+				(name "ki_keywords")
+				(value "mounting hole")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "MountingHole*Pad*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "73a5745f-7875-4412-8fd6-7c4383f5b14b")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "H3")
+			(value "MountingHole_Pad")
+			(footprint "MountingHole:MountingHole_2.2mm_M2_Pad")
+			(description "Mounting Hole with connection")
+			(fields
+				(field
+					(name "Footprint") "MountingHole:MountingHole_2.2mm_M2_Pad")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Mounting Hole with connection")
+			)
+			(libsource
+				(lib "Mechanical")
+				(part "MountingHole_Pad")
+				(description "Mounting Hole with connection")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(property
+				(name "exclude_from_bom")
+			)
+			(property
+				(name "ki_keywords")
+				(value "mounting hole")
+			)
+			(property
+				(name "ki_fp_filters")
+				(value "MountingHole*Pad*")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "510825dd-86fc-4b3d-af0d-6acd4dfa7c08")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+					)
+				)
+			)
+		)
+		(comp
+			(ref "U1")
+			(value "DEVKIT_V1_ESP32-WROOM-32")
+			(footprint "mods:MODULE_DEVKIT_V1_ESP32-WROOM-32")
+			(description "WROOM-32 Development Board ESP32 ESP-32S WiFi Bluetooth Dev Module")
+			(fields
+				(field
+					(name "MF") "Espressif Systems")
+				(field
+					(name "Package") "Package")
+				(field
+					(name "Price") "None")
+				(field
+					(name "Check_prices") "https://www.snapeda.com/parts/DEVKIT%20V1%20ESP32-WROOM-32/Espressif+Systems/view-part/?ref=eda")
+				(field
+					(name "STANDARD") "Manufacturer Recommendations")
+				(field
+					(name "PARTREV") "N/A")
+				(field
+					(name "SnapEDA_Link") "https://www.snapeda.com/parts/DEVKIT%20V1%20ESP32-WROOM-32/Espressif+Systems/view-part/?ref=snap")
+				(field
+					(name "MP") "DEVKIT V1 ESP32-WROOM-32")
+				(field
+					(name "Availability") "Not in stock")
+				(field
+					(name "MANUFACTURER") "Espressif Systems")
+				(field
+					(name "Footprint") "mods:MODULE_DEVKIT_V1_ESP32-WROOM-32")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "WROOM-32 Development Board ESP32 ESP-32S WiFi Bluetooth Dev Module")
+			)
+			(libsource
+				(lib "DEVKIT_V1_ESP32-WROOM-32")
+				(part "DEVKIT_V1_ESP32-WROOM-32")
+				(description "WROOM-32 Development Board ESP32 ESP-32S WiFi Bluetooth Dev Module")
+			)
+			(property
+				(name "MF")
+				(value "Espressif Systems")
+			)
+			(property
+				(name "Package")
+				(value "Package")
+			)
+			(property
+				(name "Price")
+				(value "None")
+			)
+			(property
+				(name "Check_prices")
+				(value "https://www.snapeda.com/parts/DEVKIT%20V1%20ESP32-WROOM-32/Espressif+Systems/view-part/?ref=eda")
+			)
+			(property
+				(name "STANDARD")
+				(value "Manufacturer Recommendations")
+			)
+			(property
+				(name "PARTREV")
+				(value "N/A")
+			)
+			(property
+				(name "SnapEDA_Link")
+				(value "https://www.snapeda.com/parts/DEVKIT%20V1%20ESP32-WROOM-32/Espressif+Systems/view-part/?ref=snap")
+			)
+			(property
+				(name "MP")
+				(value "DEVKIT V1 ESP32-WROOM-32")
+			)
+			(property
+				(name "Availability")
+				(value "Not in stock")
+			)
+			(property
+				(name "MANUFACTURER")
+				(value "Espressif Systems")
+			)
+			(property
+				(name "Sheetname")
+				(value "Raiz")
+			)
+			(property
+				(name "Sheetfile")
+				(value "tccvis.kicad_sch")
+			)
+			(sheetpath
+				(names "/")
+				(tstamps "/")
+			)
+			(tstamps "98614652-dea9-470c-afd8-9ffd21fa24a8")
+			(units
+				(unit
+					(name "A")
+					(pins
+						(pin
+							(num "1")
+						)
+						(pin
+							(num "2")
+						)
+						(pin
+							(num "3")
+						)
+						(pin
+							(num "4")
+						)
+						(pin
+							(num "5")
+						)
+						(pin
+							(num "6")
+						)
+						(pin
+							(num "7")
+						)
+						(pin
+							(num "8")
+						)
+						(pin
+							(num "9")
+						)
+						(pin
+							(num "10")
+						)
+						(pin
+							(num "11")
+						)
+						(pin
+							(num "12")
+						)
+						(pin
+							(num "13")
+						)
+						(pin
+							(num "14")
+						)
+						(pin
+							(num "15")
+						)
+						(pin
+							(num "16")
+						)
+						(pin
+							(num "17")
+						)
+						(pin
+							(num "18")
+						)
+						(pin
+							(num "19")
+						)
+						(pin
+							(num "38")
+						)
+						(pin
+							(num "37")
+						)
+						(pin
+							(num "36")
+						)
+						(pin
+							(num "35")
+						)
+						(pin
+							(num "34")
+						)
+						(pin
+							(num "33")
+						)
+						(pin
+							(num "32")
+						)
+						(pin
+							(num "31")
+						)
+						(pin
+							(num "30")
+						)
+						(pin
+							(num "29")
+						)
+						(pin
+							(num "28")
+						)
+						(pin
+							(num "27")
+						)
+						(pin
+							(num "26")
+						)
+						(pin
+							(num "25")
+						)
+						(pin
+							(num "24")
+						)
+						(pin
+							(num "23")
+						)
+						(pin
+							(num "22")
+						)
+						(pin
+							(num "21")
+						)
+						(pin
+							(num "20")
+						)
+					)
+				)
+			)
+		)
+	)
+	(groups)
+	(variants)
+	(libparts
+		(libpart
+			(lib "DEVKIT_V1_ESP32-WROOM-32")
+			(part "DEVKIT_V1_ESP32-WROOM-32")
+			(description "WROOM-32 Development Board ESP32 ESP-32S WiFi Bluetooth Dev Module")
+			(fields
+				(field
+					(name "Reference") "U")
+				(field
+					(name "Value") "DEVKIT_V1_ESP32-WROOM-32")
+				(field
+					(name "Footprint") "DEVKIT_V1_ESP32-WROOM-32:MODULE_DEVKIT_V1_ESP32-WROOM-32")
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "WROOM-32 Development Board ESP32 ESP-32S WiFi Bluetooth Dev Module")
+				(field
+					(name "MF") "Espressif Systems")
+				(field
+					(name "Package") "Package")
+				(field
+					(name "Price") "None")
+				(field
+					(name "Check_prices") "https://www.snapeda.com/parts/DEVKIT%20V1%20ESP32-WROOM-32/Espressif+Systems/view-part/?ref=eda")
+				(field
+					(name "STANDARD") "Manufacturer Recommendations")
+				(field
+					(name "PARTREV") "N/A")
+				(field
+					(name "SnapEDA_Link") "https://www.snapeda.com/parts/DEVKIT%20V1%20ESP32-WROOM-32/Espressif+Systems/view-part/?ref=snap")
+				(field
+					(name "MP") "DEVKIT V1 ESP32-WROOM-32")
+				(field
+					(name "Availability") "Not in stock")
+				(field
+					(name "MANUFACTURER") "Espressif Systems")
+			)
+			(pins
+				(pin
+					(num "1")
+					(name "3V3")
+					(type "power_in")
+				)
+				(pin
+					(num "2")
+					(name "EN")
+					(type "input")
+				)
+				(pin
+					(num "3")
+					(name "SENSOR_VP")
+					(type "input")
+				)
+				(pin
+					(num "4")
+					(name "SENSOR_VN")
+					(type "input")
+				)
+				(pin
+					(num "5")
+					(name "IO34")
+					(type "bidirectional")
+				)
+				(pin
+					(num "6")
+					(name "IO35")
+					(type "bidirectional")
+				)
+				(pin
+					(num "7")
+					(name "IO32")
+					(type "bidirectional")
+				)
+				(pin
+					(num "8")
+					(name "IO33")
+					(type "bidirectional")
+				)
+				(pin
+					(num "9")
+					(name "IO25")
+					(type "bidirectional")
+				)
+				(pin
+					(num "10")
+					(name "IO26")
+					(type "bidirectional")
+				)
+				(pin
+					(num "11")
+					(name "IO27")
+					(type "bidirectional")
+				)
+				(pin
+					(num "12")
+					(name "IO14")
+					(type "bidirectional")
+				)
+				(pin
+					(num "13")
+					(name "IO12")
+					(type "bidirectional")
+				)
+				(pin
+					(num "14")
+					(name "GND1")
+					(type "power_in")
+				)
+				(pin
+					(num "15")
+					(name "IO13")
+					(type "bidirectional")
+				)
+				(pin
+					(num "16")
+					(name "SD2")
+					(type "bidirectional")
+				)
+				(pin
+					(num "17")
+					(name "SD3")
+					(type "bidirectional")
+				)
+				(pin
+					(num "18")
+					(name "CMD")
+					(type "bidirectional")
+				)
+				(pin
+					(num "19")
+					(name "EXT_5V")
+					(type "power_in")
+				)
+				(pin
+					(num "20")
+					(name "CLK")
+					(type "input")
+				)
+				(pin
+					(num "21")
+					(name "SD0")
+					(type "bidirectional")
+				)
+				(pin
+					(num "22")
+					(name "SD1")
+					(type "bidirectional")
+				)
+				(pin
+					(num "23")
+					(name "IO15")
+					(type "bidirectional")
+				)
+				(pin
+					(num "24")
+					(name "IO2")
+					(type "bidirectional")
+				)
+				(pin
+					(num "25")
+					(name "IO0")
+					(type "bidirectional")
+				)
+				(pin
+					(num "26")
+					(name "IO4")
+					(type "bidirectional")
+				)
+				(pin
+					(num "27")
+					(name "IO16")
+					(type "bidirectional")
+				)
+				(pin
+					(num "28")
+					(name "IO17")
+					(type "bidirectional")
+				)
+				(pin
+					(num "29")
+					(name "IO5")
+					(type "bidirectional")
+				)
+				(pin
+					(num "30")
+					(name "IO18")
+					(type "bidirectional")
+				)
+				(pin
+					(num "31")
+					(name "IO19")
+					(type "bidirectional")
+				)
+				(pin
+					(num "32")
+					(name "GND2")
+					(type "power_in")
+				)
+				(pin
+					(num "33")
+					(name "IO21")
+					(type "bidirectional")
+				)
+				(pin
+					(num "34")
+					(name "RXD0")
+					(type "input")
+				)
+				(pin
+					(num "35")
+					(name "TXD0")
+					(type "output")
+				)
+				(pin
+					(num "36")
+					(name "IO22")
+					(type "bidirectional")
+				)
+				(pin
+					(num "37")
+					(name "IO23")
+					(type "bidirectional")
+				)
+				(pin
+					(num "38")
+					(name "GND3")
+					(type "power_in")
+				)
+			)
+		)
+		(libpart
+			(lib "Device")
+			(part "C")
+			(description "Unpolarized capacitor")
+			(footprints
+				(fp "C_*")
+			)
+			(fields
+				(field
+					(name "Reference") "C")
+				(field
+					(name "Value") "C")
+				(field
+					(name "Footprint")
+				)
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Unpolarized capacitor")
+			)
+			(pins
+				(pin
+					(num "1")
+					(name "")
+					(type "passive")
+				)
+				(pin
+					(num "2")
+					(name "")
+					(type "passive")
+				)
+			)
+		)
+		(libpart
+			(lib "Mechanical")
+			(part "MountingHole_Pad")
+			(description "Mounting Hole with connection")
+			(footprints
+				(fp "MountingHole*Pad*")
+			)
+			(fields
+				(field
+					(name "Reference") "H")
+				(field
+					(name "Value") "MountingHole_Pad")
+				(field
+					(name "Footprint")
+				)
+				(field
+					(name "Datasheet")
+				)
+				(field
+					(name "Description") "Mounting Hole with connection")
+			)
+			(pins
+				(pin
+					(num "1")
+					(name "1")
+					(type "input")
+				)
+			)
+		)
+		(libpart
+			(lib "RF_Module")
+			(part "DWM1000")
+			(description "Ultra wide band RF module With ranging location capabilities")
+			(docs "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+			(footprints
+				(fp "*DWM1000*")
+			)
+			(fields
+				(field
+					(name "Reference") "DWM")
+				(field
+					(name "Value") "DWM1000")
+				(field
+					(name "Footprint") "RF_Module:DWM1000")
+				(field
+					(name "Datasheet") "https://www.decawave.com/sites/default/files/resources/dwm1000-datasheet-v1.3.pdf")
+				(field
+					(name "Description") "Ultra wide band RF module With ranging location capabilities")
+			)
+			(pins
+				(pin
+					(num "1")
+					(name "EXTON")
+					(type "output")
+				)
+				(pin
+					(num "2")
+					(name "WAKEUP")
+					(type "bidirectional")
+				)
+				(pin
+					(num "3")
+					(name "~{RST}")
+					(type "bidirectional")
+				)
+				(pin
+					(num "4")
+					(name "GPIO7")
+					(type "bidirectional")
+				)
+				(pin
+					(num "5")
+					(name "VDDAON")
+					(type "power_in")
+				)
+				(pin
+					(num "6")
+					(name "VDD3V3")
+					(type "power_in")
+				)
+				(pin
+					(num "7")
+					(name "VDD3V3")
+					(type "power_in")
+				)
+				(pin
+					(num "8")
+					(name "VSS")
+					(type "power_in")
+				)
+				(pin
+					(num "9")
+					(name "GPIO6/EXTRXE/SPIHA")
+					(type "bidirectional")
+				)
+				(pin
+					(num "10")
+					(name "GPIO5/EXTTXE/SPIPOL")
+					(type "bidirectional")
+				)
+				(pin
+					(num "11")
+					(name "GPIO4/EXTPA")
+					(type "bidirectional")
+				)
+				(pin
+					(num "12")
+					(name "GPIO3/TXLED")
+					(type "bidirectional")
+				)
+				(pin
+					(num "13")
+					(name "GPIO2/RXLED")
+					(type "bidirectional")
+				)
+				(pin
+					(num "14")
+					(name "GPIO1/SFDLED")
+					(type "bidirectional")
+				)
+				(pin
+					(num "15")
+					(name "GPIO0/RXOKLED")
+					(type "bidirectional")
+				)
+				(pin
+					(num "16")
+					(name "VSS")
+					(type "passive")
+				)
+				(pin
+					(num "17")
+					(name "~{SPICS}")
+					(type "input")
+				)
+				(pin
+					(num "18")
+					(name "SPIMOSI")
+					(type "input")
+				)
+				(pin
+					(num "19")
+					(name "SPIMISO")
+					(type "output")
+				)
+				(pin
+					(num "20")
+					(name "SPICLK")
+					(type "input")
+				)
+				(pin
+					(num "21")
+					(name "VSS")
+					(type "passive")
+				)
+				(pin
+					(num "22")
+					(name "IRQ/GPIO8")
+					(type "bidirectional")
+				)
+				(pin
+					(num "23")
+					(name "VSS")
+					(type "passive")
+				)
+				(pin
+					(num "24")
+					(name "VSS")
+					(type "passive")
+				)
+			)
+		)
+	)
+	(libraries
+		(library
+			(logical "DEVKIT_V1_ESP32-WROOM-32")
+			(uri "C:/Users/aaata/Documents/KiCad/10.0/symbols/DEVKIT_V1_ESP32-WROOM-32/DEVKIT_V1_ESP32-WROOM-32.kicad_sym")
+		)
+		(library
+			(logical "Device")
+			(uri "${KICAD10_SYMBOL_DIR}/Device.kicad_sym")
+		)
+		(library
+			(logical "Mechanical")
+			(uri "${KICAD10_SYMBOL_DIR}/Mechanical.kicad_sym")
+		)
+		(library
+			(logical "RF_Module")
+			(uri "${KICAD10_SYMBOL_DIR}/RF_Module.kicad_sym")
+		)
+	)
+	(nets
+		(net
+			(code "1")
+			(name "+3V3")
+			(class "Default")
+			(node
+				(ref "C1")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C2")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "C3")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "C4")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "C5")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "C6")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "C7")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM2")
+				(pin "5")
+				(pinfunction "VDDAON_5")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM2")
+				(pin "6")
+				(pinfunction "VDD3V3_6")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM2")
+				(pin "7")
+				(pinfunction "VDD3V3_7")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM3")
+				(pin "5")
+				(pinfunction "VDDAON_5")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM3")
+				(pin "6")
+				(pinfunction "VDD3V3_6")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM3")
+				(pin "7")
+				(pinfunction "VDD3V3_7")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM4")
+				(pin "5")
+				(pinfunction "VDDAON_5")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM4")
+				(pin "6")
+				(pinfunction "VDD3V3_6")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM4")
+				(pin "7")
+				(pinfunction "VDD3V3_7")
+				(pintype "power_in")
+			)
+			(node
+				(ref "U1")
+				(pin "1")
+				(pinfunction "3V3_1")
+				(pintype "power_in")
+			)
+		)
+		(net
+			(code "2")
+			(name "GND")
+			(class "Default")
+			(node
+				(ref "C1")
+				(pin "1")
+				(pintype "passive")
+			)
+			(node
+				(ref "C2")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C3")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C4")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C5")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C6")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "C7")
+				(pin "2")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM2")
+				(pin "10")
+				(pinfunction "GPIO5/EXTTXE/SPIPOL_10")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM2")
+				(pin "11")
+				(pinfunction "GPIO4/EXTPA_11")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM2")
+				(pin "12")
+				(pinfunction "GPIO3/TXLED_12")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM2")
+				(pin "13")
+				(pinfunction "GPIO2/RXLED_13")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM2")
+				(pin "14")
+				(pinfunction "GPIO1/SFDLED_14")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM2")
+				(pin "15")
+				(pinfunction "GPIO0/RXOKLED_15")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM2")
+				(pin "16")
+				(pinfunction "VSS_16")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM2")
+				(pin "21")
+				(pinfunction "VSS_21")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM2")
+				(pin "23")
+				(pinfunction "VSS_23")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM2")
+				(pin "24")
+				(pinfunction "VSS_24")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM2")
+				(pin "8")
+				(pinfunction "VSS_8")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM2")
+				(pin "9")
+				(pinfunction "GPIO6/EXTRXE/SPIHA_9")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "10")
+				(pinfunction "GPIO5/EXTTXE/SPIPOL_10")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "11")
+				(pinfunction "GPIO4/EXTPA_11")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "12")
+				(pinfunction "GPIO3/TXLED_12")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "13")
+				(pinfunction "GPIO2/RXLED_13")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "14")
+				(pinfunction "GPIO1/SFDLED_14")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "15")
+				(pinfunction "GPIO0/RXOKLED_15")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "16")
+				(pinfunction "VSS_16")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM3")
+				(pin "21")
+				(pinfunction "VSS_21")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM3")
+				(pin "23")
+				(pinfunction "VSS_23")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM3")
+				(pin "24")
+				(pinfunction "VSS_24")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM3")
+				(pin "8")
+				(pinfunction "VSS_8")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM3")
+				(pin "9")
+				(pinfunction "GPIO6/EXTRXE/SPIHA_9")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "10")
+				(pinfunction "GPIO5/EXTTXE/SPIPOL_10")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "11")
+				(pinfunction "GPIO4/EXTPA_11")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "12")
+				(pinfunction "GPIO3/TXLED_12")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "13")
+				(pinfunction "GPIO2/RXLED_13")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "14")
+				(pinfunction "GPIO1/SFDLED_14")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "15")
+				(pinfunction "GPIO0/RXOKLED_15")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "16")
+				(pinfunction "VSS_16")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM4")
+				(pin "21")
+				(pinfunction "VSS_21")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM4")
+				(pin "23")
+				(pinfunction "VSS_23")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM4")
+				(pin "24")
+				(pinfunction "VSS_24")
+				(pintype "passive")
+			)
+			(node
+				(ref "DWM4")
+				(pin "8")
+				(pinfunction "VSS_8")
+				(pintype "power_in")
+			)
+			(node
+				(ref "DWM4")
+				(pin "9")
+				(pinfunction "GPIO6/EXTRXE/SPIHA_9")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "H1")
+				(pin "1")
+				(pinfunction "1_1")
+				(pintype "input")
+			)
+			(node
+				(ref "H2")
+				(pin "1")
+				(pinfunction "1_1")
+				(pintype "input")
+			)
+			(node
+				(ref "H3")
+				(pin "1")
+				(pinfunction "1_1")
+				(pintype "input")
+			)
+			(node
+				(ref "U1")
+				(pin "14")
+				(pinfunction "GND1_14")
+				(pintype "power_in")
+			)
+			(node
+				(ref "U1")
+				(pin "32")
+				(pinfunction "GND2_32")
+				(pintype "power_in")
+			)
+			(node
+				(ref "U1")
+				(pin "38")
+				(pinfunction "GND3_38")
+				(pintype "power_in")
+			)
+		)
+		(net
+			(code "3")
+			(name "Net-(DWM2-IRQ{slash}GPIO8)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "22")
+				(pinfunction "IRQ/GPIO8_22")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "U1")
+				(pin "5")
+				(pinfunction "IO34_5")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "4")
+			(name "Net-(DWM2-SPICLK)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "20")
+				(pinfunction "SPICLK_20")
+				(pintype "input")
+			)
+			(node
+				(ref "DWM3")
+				(pin "20")
+				(pinfunction "SPICLK_20")
+				(pintype "input")
+			)
+			(node
+				(ref "DWM4")
+				(pin "20")
+				(pinfunction "SPICLK_20")
+				(pintype "input")
+			)
+			(node
+				(ref "U1")
+				(pin "30")
+				(pinfunction "IO18_30")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "5")
+			(name "Net-(DWM2-SPIMISO)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "19")
+				(pinfunction "SPIMISO_19")
+				(pintype "output")
+			)
+			(node
+				(ref "DWM3")
+				(pin "19")
+				(pinfunction "SPIMISO_19")
+				(pintype "output")
+			)
+			(node
+				(ref "DWM4")
+				(pin "19")
+				(pinfunction "SPIMISO_19")
+				(pintype "output")
+			)
+			(node
+				(ref "U1")
+				(pin "31")
+				(pinfunction "IO19_31")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "6")
+			(name "Net-(DWM2-SPIMOSI)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "18")
+				(pinfunction "SPIMOSI_18")
+				(pintype "input")
+			)
+			(node
+				(ref "DWM3")
+				(pin "18")
+				(pinfunction "SPIMOSI_18")
+				(pintype "input")
+			)
+			(node
+				(ref "DWM4")
+				(pin "18")
+				(pinfunction "SPIMOSI_18")
+				(pintype "input")
+			)
+			(node
+				(ref "U1")
+				(pin "37")
+				(pinfunction "IO23_37")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "7")
+			(name "Net-(DWM2-~{RST})")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "3")
+				(pinfunction "~{RST}_3")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM3")
+				(pin "3")
+				(pinfunction "~{RST}_3")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "DWM4")
+				(pin "3")
+				(pinfunction "~{RST}_3")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "U1")
+				(pin "26")
+				(pinfunction "IO4_26")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "8")
+			(name "Net-(DWM2-~{SPICS})")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "17")
+				(pinfunction "~{SPICS}_17")
+				(pintype "input")
+			)
+			(node
+				(ref "U1")
+				(pin "29")
+				(pinfunction "IO5_29")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "9")
+			(name "Net-(DWM3-IRQ{slash}GPIO8)")
+			(class "Default")
+			(node
+				(ref "DWM3")
+				(pin "22")
+				(pinfunction "IRQ/GPIO8_22")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "U1")
+				(pin "6")
+				(pinfunction "IO35_6")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "10")
+			(name "Net-(DWM3-~{SPICS})")
+			(class "Default")
+			(node
+				(ref "DWM3")
+				(pin "17")
+				(pinfunction "~{SPICS}_17")
+				(pintype "input")
+			)
+			(node
+				(ref "U1")
+				(pin "28")
+				(pinfunction "IO17_28")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "11")
+			(name "Net-(DWM4-IRQ{slash}GPIO8)")
+			(class "Default")
+			(node
+				(ref "DWM4")
+				(pin "22")
+				(pinfunction "IRQ/GPIO8_22")
+				(pintype "bidirectional")
+			)
+			(node
+				(ref "U1")
+				(pin "4")
+				(pinfunction "SENSOR_VN_4")
+				(pintype "input")
+			)
+		)
+		(net
+			(code "12")
+			(name "Net-(DWM4-~{SPICS})")
+			(class "Default")
+			(node
+				(ref "DWM4")
+				(pin "17")
+				(pinfunction "~{SPICS}_17")
+				(pintype "input")
+			)
+			(node
+				(ref "U1")
+				(pin "27")
+				(pinfunction "IO16_27")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "13")
+			(name "unconnected-(DWM2-EXTON-Pad1)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "1")
+				(pinfunction "EXTON_1")
+				(pintype "output")
+			)
+		)
+		(net
+			(code "14")
+			(name "unconnected-(DWM2-GPIO7-Pad4)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "4")
+				(pinfunction "GPIO7_4")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "15")
+			(name "unconnected-(DWM2-WAKEUP-Pad2)")
+			(class "Default")
+			(node
+				(ref "DWM2")
+				(pin "2")
+				(pinfunction "WAKEUP_2")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "16")
+			(name "unconnected-(DWM3-EXTON-Pad1)")
+			(class "Default")
+			(node
+				(ref "DWM3")
+				(pin "1")
+				(pinfunction "EXTON_1")
+				(pintype "output")
+			)
+		)
+		(net
+			(code "17")
+			(name "unconnected-(DWM3-GPIO7-Pad4)")
+			(class "Default")
+			(node
+				(ref "DWM3")
+				(pin "4")
+				(pinfunction "GPIO7_4")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "18")
+			(name "unconnected-(DWM3-WAKEUP-Pad2)")
+			(class "Default")
+			(node
+				(ref "DWM3")
+				(pin "2")
+				(pinfunction "WAKEUP_2")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "19")
+			(name "unconnected-(DWM4-EXTON-Pad1)")
+			(class "Default")
+			(node
+				(ref "DWM4")
+				(pin "1")
+				(pinfunction "EXTON_1")
+				(pintype "output")
+			)
+		)
+		(net
+			(code "20")
+			(name "unconnected-(DWM4-GPIO7-Pad4)")
+			(class "Default")
+			(node
+				(ref "DWM4")
+				(pin "4")
+				(pinfunction "GPIO7_4")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "21")
+			(name "unconnected-(DWM4-WAKEUP-Pad2)")
+			(class "Default")
+			(node
+				(ref "DWM4")
+				(pin "2")
+				(pinfunction "WAKEUP_2")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "22")
+			(name "unconnected-(U1-CLK-Pad20)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "20")
+				(pinfunction "CLK_20")
+				(pintype "input")
+			)
+		)
+		(net
+			(code "23")
+			(name "unconnected-(U1-CMD-Pad18)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "18")
+				(pinfunction "CMD_18")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "24")
+			(name "unconnected-(U1-EN-Pad2)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "2")
+				(pinfunction "EN_2")
+				(pintype "input")
+			)
+		)
+		(net
+			(code "25")
+			(name "unconnected-(U1-EXT_5V-Pad19)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "19")
+				(pinfunction "EXT_5V_19")
+				(pintype "power_in")
+			)
+		)
+		(net
+			(code "26")
+			(name "unconnected-(U1-IO0-Pad25)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "25")
+				(pinfunction "IO0_25")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "27")
+			(name "unconnected-(U1-IO2-Pad24)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "24")
+				(pinfunction "IO2_24")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "28")
+			(name "unconnected-(U1-IO12-Pad13)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "13")
+				(pinfunction "IO12_13")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "29")
+			(name "unconnected-(U1-IO13-Pad15)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "15")
+				(pinfunction "IO13_15")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "30")
+			(name "unconnected-(U1-IO14-Pad12)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "12")
+				(pinfunction "IO14_12")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "31")
+			(name "unconnected-(U1-IO15-Pad23)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "23")
+				(pinfunction "IO15_23")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "32")
+			(name "unconnected-(U1-IO21-Pad33)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "33")
+				(pinfunction "IO21_33")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "33")
+			(name "unconnected-(U1-IO22-Pad36)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "36")
+				(pinfunction "IO22_36")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "34")
+			(name "unconnected-(U1-IO25-Pad9)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "9")
+				(pinfunction "IO25_9")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "35")
+			(name "unconnected-(U1-IO26-Pad10)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "10")
+				(pinfunction "IO26_10")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "36")
+			(name "unconnected-(U1-IO27-Pad11)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "11")
+				(pinfunction "IO27_11")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "37")
+			(name "unconnected-(U1-IO32-Pad7)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "7")
+				(pinfunction "IO32_7")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "38")
+			(name "unconnected-(U1-IO33-Pad8)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "8")
+				(pinfunction "IO33_8")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "39")
+			(name "unconnected-(U1-RXD0-Pad34)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "34")
+				(pinfunction "RXD0_34")
+				(pintype "input")
+			)
+		)
+		(net
+			(code "40")
+			(name "unconnected-(U1-SD0-Pad21)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "21")
+				(pinfunction "SD0_21")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "41")
+			(name "unconnected-(U1-SD1-Pad22)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "22")
+				(pinfunction "SD1_22")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "42")
+			(name "unconnected-(U1-SD2-Pad16)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "16")
+				(pinfunction "SD2_16")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "43")
+			(name "unconnected-(U1-SD3-Pad17)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "17")
+				(pinfunction "SD3_17")
+				(pintype "bidirectional")
+			)
+		)
+		(net
+			(code "44")
+			(name "unconnected-(U1-SENSOR_VP-Pad3)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "3")
+				(pinfunction "SENSOR_VP_3")
+				(pintype "input")
+			)
+		)
+		(net
+			(code "45")
+			(name "unconnected-(U1-TXD0-Pad35)")
+			(class "Default")
+			(node
+				(ref "U1")
+				(pin "35")
+				(pinfunction "TXD0_35")
+				(pintype "output")
+			)
+		)
+	)
+)

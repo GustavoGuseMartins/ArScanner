@@ -1,0 +1,32 @@
+# UWB DWM1000: revisão da montagem e ensaio de alcance
+
+Revisão de 26/09/2026 com as capturas do aplicativo, a foto da PCB do visualizador, as medidas informadas pelo autor e o `dwm1000-datasheet-v1-6.pdf` (Decawave, versão 1.6). Nenhum rádio foi testado fisicamente nesta revisão.
+
+Compilados com sucesso os firmwares da base e do scanner; a validação de geometria no Unity passou e foi gerado `Builds/ScannerAR-uwb-calibracao-20260926.apk`. O APK foi instalado no Samsung SM-S916B e a atividade principal iniciou sem erro registrado de inicialização. A base do visualizador foi gravada pela COM5 e reiniciou com as três âncoras identificadas (`radioMask: 7`). Sem a tag do scanner naquele ensaio, os alcances permaneceram em `-1`. O scanner foi gravado pela COM6; após reiniciar, informou tag DWM1000 reconhecida e modo de escuta TWR ativo. Ainda falta medir os três alcances com os aparelhos operando juntos e conferir a calibração em distâncias conhecidas.
+
+## Geometria do visualizador
+
+As três antenas formam um triângulo na PCB, com a DWM2 em cima, DWM3 à esquerda e DWM4 à direita. O autor mediu aproximadamente **175 mm** entre as antenas da base e **100 mm** de cada uma até a antena superior. Assumindo lados iguais, a altura é `sqrt(100² - 87,5²) = 48,412 mm`. Firmware e aplicativo passaram a usar DWM2 `(87,5; 48,412; 0)`, DWM3 `(0; 0; 0)` e DWM4 `(175; 0; 0)` mm; no referencial do celular a origem é o ponto médio da base. Essas são medidas de centros físicos, não uma determinação de centros de fase RF. Confirmar com paquímetro e a orientação da placa no celular antes de tratar a posição como precisa.
+
+O triângulo é real e não colinear, mas tem abertura angular pequena vista de uma tag a alguns metros. Em linha reta à frente do centro da placa, o modelo geométrico atualizado dá GDOP aproximado de 26,6 a 1 m, 39,9 a 1,5 m, 53,1 a 2 m e 132,8 a 5 m. São multiplicadores de ruído local: 4 cm de erro independente por alcance já correspondem a cerca de 1,6 m de incerteza linearizada a 1,5 m. Erros sistemáticos, reflexões e movimento podem piorar isso. As três antenas também são coplanares e deixam duas soluções 3D espelhadas.
+
+## O que o datasheet permite ajustar
+
+- Seção 2.1.3: o atraso de antena é calibrado medindo uma distância conhecida entre dois sistemas DWM1000 e ajustando até o alcance reportado concordar. O documento recomenda uma calibração por implementação e, para maior precisão, por módulo. **Não fornece um atraso universal**. A biblioteca local usava 16384 ticks como padrão genérico; o firmware agora expõe um parâmetro separado para a tag e cada âncora, inicialmente com esse mesmo valor. Os números só devem mudar após uma medição controlada.
+- Seção 5.1 e Figura 8: a antena deve ter área livre de metal/material opaco a RF nas proximidades; recomenda pelo menos 10 mm de afastamento lateral da região indicada e nenhum metal acima/abaixo da antena. A foto mostra as antenas nas bordas externas, o que é coerente com o arranjo proposto, mas não revela cobre na face oposta nem a separação interna da capinha e do celular.
+- Seções 4.1 e 4.2: alimentação normal de 2,8 a 3,6 V, tipicamente 3,3 V; corrente típica de aproximadamente 140 mA em transmissão e 160 mA em recepção por módulo nas condições da tabela. Verificar tensão junto a cada módulo durante troca de pacotes se houver perda de respostas.
+- Seção 4.4: a tabela de sensibilidade foi medida em canal 5 com PRF de 16 MHz. Os dois firmwares usam canal 5, PRF 64 MHz, 110 kb/s, preâmbulo de 2048 símbolos e código 10. A tabela não é uma meta direta de erro de distância para essa configuração; não há motivo documentado para alterar canal, preâmbulo ou potência às cegas.
+
+## Interpretação das capturas
+
+As três distâncias brutas recebidas mostram que o enlace DS-TWR funciona, mas não provam uma posição. Diferenças brutas entre rádios incluem atrasos individuais; a desigualdade geométrica `|di-dj| <= distância entre antenas i,j` só se aplica depois de corrigir cada alcance. O aplicativo indicou tanto trincas **incompatíveis após correção** quanto soluções com incerteza de aproximadamente **10 a 14,6 m**. Resíduo pequeno no ajuste não remove a amplificação geométrica. Anteriormente o aplicativo ainda movia o scanner com soluções de baixa confiança; agora suspende a pose e os novos pontos nesses casos e oferece marcação AR para o ensaio com scanner parado.
+
+## Ensaio para calibrar sem mascarar o erro
+
+1. Colocar scanner/tag e placa do celular imóveis, com visão direta e sem pessoas entre antenas. Afastar o conjunto de metal, parede, chão e bateria na região frontal das antenas. Medir **em linha reta entre o centro da antena da tag e o ponto médio das antenas da base**, deixando a tag na normal da placa e na mesma altura do centro. Registrar a orientação da placa e o pan parado.
+2. Medir as três distâncias brutas e sua dispersão em pelo menos dois pontos, por exemplo 0,8 e 1,5 m. Capturar 20 amostras por posição no menu. Repetir cada posição para ver se os resultados mudam com a orientação ou com o celular na capinha. Uma calibração que só fecha no ponto usado para o ajuste não basta.
+3. Usar um terceiro ponto independente, por exemplo 2 m, para conferir os três alcances corrigidos que agora aparecem no HUD. Comparar cada um com a distância geométrica até sua antena, respeitando os offsets físicos. A variação e o erro nesse ponto ajudam a distinguir atraso fixo de multipercurso/escala. Se o perfil salvo foi obtido com disposição incorreta, usar **Redefinir perfil** e refazer as duas capturas.
+4. Para calibrar o atraso no firmware, manter a tag em valor de referência e ajustar cada âncora separadamente por um ensaio conhecido, repetindo em outras distâncias e orientações. Guardar os valores e métodos usados. Após alterar atraso no firmware, redefinir o perfil do celular para evitar aplicar a correção antiga duas vezes.
+5. Para testar a nuvem enquanto o scanner está parado sobre a mesa, usar **Marcar scanner na mesa (AR, scanner parado)**, apontando o centro da tela ao tampo no ponto do eixo do pan. Conferir a altura do eixo e alinhar yaw com os motores parados. Essa marcação é uma referência visual fixa, não prova rastreamento UWB.
+
+Mesmo com alcance calibrado, esta PCB compacta não fornece pose livre 3D de precisão centimétrica no quarto. Para acompanhar scanner e celular em movimento, serão necessários uma base de antenas muito mais aberta e uma referência independente para resolver o lado do plano e o yaw do scanner, ou rastreamento visual do scanner.

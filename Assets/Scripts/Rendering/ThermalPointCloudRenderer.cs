@@ -7,42 +7,12 @@ using UnityEngine;
 
 namespace ArScanner.Rendering
 {
-    public enum VisualizationMode
-    {
-        ThermalOnly,        // Espectro térmico puro (Ironbow, Jet, Turbo)
-        RgbPhotoReal,       // Cores reais da câmera óptica OV2640
-        HybridThermalXRay   // Cor real RGB com destaque térmico translúcido através de paredes
-    }
-
-    public enum ThermalColormap
-    {
-        Ironbow,
-        Jet,
-        Turbo,
-        Hot
-    }
-
     [RequireComponent(typeof(PointCloudTcpReceiver))]
     public class ThermalPointCloudRenderer : MonoBehaviour
     {
-        [Header("Modo de Visualização")]
-        public VisualizationMode visualMode = VisualizationMode.HybridThermalXRay;
-        public ThermalColormap colormap = ThermalColormap.Ironbow;
-
-        [Header("Visão Através de Paredes (X-Ray)")]
-        [Tooltip("Opacidade de superfícies frias/paredes (0.0 = invisível/ver através, 1.0 = sólido)")]
-        [Range(0.0f, 1.0f)]
-        public float wallOpacity = 0.25f;
-
-        [Tooltip("Temperatura a partir da qual um ponto é considerado Hotspot e atravessa paredes")]
-        public float hotspotThresholdTemp = 28.0f;
-
-        [Header("LOD Planar (Otimização de Superfícies Amplas / Armários)")]
-        [Tooltip("Ativa a redução poligonal/planar de pontos coplanares repetidos")]
-        public bool enablePlanarLOD = true;
-        [Tooltip("Fator de salto em superfícies planas para economizar pontos")]
-        [Range(1, 4)]
-        public int planarDecimationStep = 2; // Pula feixes redundantemente coplanares
+        public const float DefaultMountYawOffset = 200f;
+        // Gray marks LiDAR geometry outside the thermal image or without a fresh frame.
+        private static readonly Color32 GeometryColor = new Color32(235, 235, 235, 255);
 
         [Header("Capacidade e Performance")]
         [Range(1000, 150000)]
@@ -52,16 +22,62 @@ namespace ArScanner.Rendering
 
         [Header("Tamanho do Ponto")]
         [Range(0.005f, 0.1f)]
-        public float pointSize = 0.025f;
+        public float pointSize = 0.00625f;
 
-        [Header("Escala Térmica")]
-        public float minTemperature = 18.0f;
-        public float maxTemperature = 42.0f;
+        [Range(0f, 1f)]
+        public float pointOpacity = 1.0f;
+        private float lastOpacity = 1.0f;
+
+        [Header("Qualidade LiDAR")]
+        [Tooltip("Descarta apenas retornos marcados pelo LiDAR como sinal fraco. Esse aviso não comprova erro de distância.")]
+        public bool rejectWeakLidarReturns = false;
+        public long weakLidarDiscardedPoints;
+
+        [Header("Cor Térmica")]
+        public bool showThermalColors = true;
+        public bool useAbsoluteThermalScale = true;
+        public float thermalDisplayMinC = 18.0f;
+        public float thermalDisplayMaxC = 40.0f;
+        private bool lastThermalColors = true;
+        private bool lastAbsoluteThermalScale = true;
+        private float lastThermalMinC = 18.0f, lastThermalMaxC = 40.0f;
+
+        [Header("LOD de Superfícies")]
+        public bool enableSurfaceLod = true;
+        public float lodNearMeters = .8f;
+        public float lodFarMeters = 2.5f;
+        public float lodTileSize = .16f;
+        public float lodPlaneTolerance = .018f;
+        public float lodMaxThermalSpreadC = 2.5f;
+        public int surfaceLodPolygons;
+        public int surfaceLodMergedPoints;
+        private bool lastSurfaceLodEnabled = true;
+        private bool lodDirty = true;
+        private float nextLodTime;
+        private Vector3 lastLodCameraPosition;
+        private GameObject lodObject;
+        private MeshFilter lodFilter;
+        private Mesh lodMesh;
+
+        [Header("Orientação da Nuvem")]
+        [Tooltip("Ajuste de inclinação angular (Pitch) em graus (+90° gira a varredura para cima)")]
+        public float pointPitchOffset = 0.0f;
+        [Tooltip("Extrínseco fixo de montagem LiDAR → base. A direção da base no AR é alinhada separadamente.")]
+        public float pointYawOffset = DefaultMountYawOffset;
+        public float pointRollOffset = 0.0f;
+        [Tooltip("Espelha a varredura vertical ao redor do centro óptico do LiDAR para conferir chão/teto sem alterar o firmware.")]
+        public bool invertVerticalLidar = true;
+        [Tooltip("Altura do centro óptico acima do eixo de pan, medida na montagem.")]
+        public float lidarOpticalHeight = 0.05f;
+        public bool showScannerAxes = true;
+        private Transform axesRoot;
+        private readonly LineRenderer[] scannerAxes = new LineRenderer[3];
 
         [Header("Estatísticas em Tempo Real")]
         public int activePointsCount = 0;
         public float observedMinTemp = 999f;
         public float observedMaxTemp = -999f;
+        public int activeThermalPointsCount;
         public bool isPaused = false;
 
         [Header("Referências")]
@@ -69,30 +85,68 @@ namespace ArScanner.Rendering
         public ParticleSystem targetParticleSystem;
 
         private PointCloudTcpReceiver receiver;
+        private ArScanner.Spatial.UwbAnchorManager spatial;
 
         private struct StoredPoint
         {
-            public Vector3 localPosition;
-            public Color32 color;
+            public Vector3 worldPosition;
+            public Vector3 viewDirection;
+            public Color32 rgb;
             public float temperature;
             public byte surfaceFlags;
+            public Vector3Int voxelKey;
+            public byte observations;
         }
 
         private readonly Dictionary<Vector3Int, int> voxelToIndex = new Dictionary<Vector3Int, int>();
         private StoredPoint[] pointsBuffer;
         private ParticleSystem.Particle[] particlesBuffer;
+        private bool[] lodCovered;
         private bool bufferDirty = false;
-        private int planarCounter = 0;
+        private int nextReplacementIndex = 0;
+        private Material pointMaterial;
+        private Material surfaceMaterial;
+        private Vector3 lastVisibilityCameraPosition;
+        private bool hasVisibilityCameraPosition;
+        private float nextVisibilityTime;
 
         private void Awake()
         {
             receiver = GetComponent<PointCloudTcpReceiver>();
+            spatial = GetComponent<ArScanner.Spatial.UwbAnchorManager>();
             if (pointCloudRoot == null) pointCloudRoot = this.transform;
+            maxPoints = Mathf.Clamp(maxPoints, 1000, 150000);
+            voxelGridSize = Mathf.Max(0.001f, voxelGridSize);
 
             EnsureParticleSystemSetup();
+            lodObject = new GameObject("SurfaceLodMesh");
+            lodFilter = lodObject.AddComponent<MeshFilter>();
+            lodObject.AddComponent<MeshRenderer>().sharedMaterial = surfaceMaterial ?? pointMaterial;
 
+            if (pointMaterial != null)
+            {
+                axesRoot = new GameObject("ScannerAxes").transform;
+                axesRoot.SetParent(pointCloudRoot, false);
+                Vector3[] directions = { Vector3.right, Vector3.up, Vector3.forward };
+                Color[] colors = { Color.red, Color.green, Color.blue };
+                for (int i = 0; i < 3; i++)
+                {
+                    var axis = new GameObject("XYZ"[i].ToString()).AddComponent<LineRenderer>();
+                    axis.transform.SetParent(axesRoot, false);
+                    axis.useWorldSpace = false;
+                    axis.positionCount = 2;
+                    axis.SetPosition(0, Vector3.zero);
+                    axis.SetPosition(1, directions[i] * .3f);
+                    axis.startWidth = .006f;
+                    axis.endWidth = .002f;
+                    axis.startColor = axis.endColor = colors[i];
+                    axis.sharedMaterial = pointMaterial;
+                    scannerAxes[i] = axis;
+                }
+            }
             pointsBuffer = new StoredPoint[maxPoints];
             particlesBuffer = new ParticleSystem.Particle[maxPoints];
+            lodCovered = new bool[maxPoints];
         }
 
         private void EnsureParticleSystemSetup()
@@ -112,7 +166,8 @@ namespace ArScanner.Rendering
             main.loop = false;
             main.playOnAwake = false;
             main.maxParticles = maxPoints;
-            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            // Pontos já observados permanecem no mundo quando o scanner se move.
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
             main.startSize = pointSize;
             main.startLifetime = float.MaxValue;
 
@@ -125,25 +180,75 @@ namespace ArScanner.Rendering
             var psRenderer = targetParticleSystem.GetComponent<ParticleSystemRenderer>();
             psRenderer.renderMode = ParticleSystemRenderMode.Billboard;
 
-            Shader defaultShader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+            Shader defaultShader = Resources.Load<Shader>("ArScannerPointCloud");
+            if (defaultShader == null) defaultShader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
             if (defaultShader == null) defaultShader = Shader.Find("Particles/Standard Unlit");
             if (defaultShader != null)
             {
-                psRenderer.sharedMaterial = new Material(defaultShader);
+                pointMaterial = new Material(defaultShader);
+                pointMaterial.SetFloat("_ZWrite", 1f);
+                pointMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry + 2;
+                psRenderer.sharedMaterial = pointMaterial;
+                surfaceMaterial = new Material(defaultShader);
+                surfaceMaterial.SetFloat("_Cull", 2f); // Back
+                surfaceMaterial.SetFloat("_ZWrite", 1f);
+                surfaceMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry + 1;
             }
         }
 
         private void Update()
         {
-            if (receiver == null || isPaused) return;
-
+            UpdateScannerAxes();
             int processed = 0;
-            while (processed < maxPointsPerFrame && receiver.incomingPoints.TryDequeue(out ScanPointData pointData))
+            while (receiver != null && !isPaused && processed < maxPointsPerFrame && receiver.incomingPoints.TryDequeue(out ScanPointData pointData))
             {
                 ProcessScanPoint(pointData);
                 processed++;
             }
 
+            pointOpacity = Mathf.Clamp01(pointOpacity);
+            thermalDisplayMaxC = Mathf.Max(thermalDisplayMinC + 1f, thermalDisplayMaxC);
+            if (!Mathf.Approximately(lastOpacity, pointOpacity) ||
+                lastThermalColors != showThermalColors ||
+                lastAbsoluteThermalScale != useAbsoluteThermalScale ||
+                !Mathf.Approximately(lastThermalMinC, thermalDisplayMinC) ||
+                !Mathf.Approximately(lastThermalMaxC, thermalDisplayMaxC))
+            {
+                lastOpacity = pointOpacity;
+                lastThermalColors = showThermalColors;
+                lastAbsoluteThermalScale = useAbsoluteThermalScale;
+                lastThermalMinC = thermalDisplayMinC;
+                lastThermalMaxC = thermalDisplayMaxC;
+                for (int i = 0; i < activePointsCount; i++)
+                {
+                    Color32 c = PointColor(pointsBuffer[i].temperature,
+                        pointsBuffer[i].surfaceFlags);
+                    c.a = (byte)(255 * pointOpacity);
+                    particlesBuffer[i].startColor = c;
+                }
+                bufferDirty = true;
+                lodDirty = true;
+            }
+
+            if (lastSurfaceLodEnabled != enableSurfaceLod)
+            {
+                lastSurfaceLodEnabled = enableSurfaceLod;
+                lodDirty = true;
+                nextLodTime = 0f;
+            }
+            Vector3 cameraPosition = spatial != null && spatial.arCameraTransform != null
+                ? spatial.arCameraTransform.position : Camera.main != null ? Camera.main.transform.position : Vector3.zero;
+            if (Vector3.Distance(cameraPosition,lastLodCameraPosition) > .5f) lodDirty = true;
+            if (lodDirty && Time.unscaledTime >= nextLodTime) RebuildSurfaceLod(cameraPosition);
+            if (Time.unscaledTime >= nextVisibilityTime &&
+                (!hasVisibilityCameraPosition ||
+                 Vector3.Distance(cameraPosition,lastVisibilityCameraPosition) > .05f))
+            {
+                RefreshPointVisibility(cameraPosition);
+                lastVisibilityCameraPosition = cameraPosition;
+                hasVisibilityCameraPosition = true;
+                nextVisibilityTime = Time.unscaledTime + .2f;
+            }
             if (bufferDirty)
             {
                 UpdateParticles();
@@ -151,164 +256,161 @@ namespace ArScanner.Rendering
             }
         }
 
+        private void UpdateScannerAxes()
+        {
+            if (axesRoot == null) return;
+            // Position is meaningful before heading; horizontal arrows are not.
+            bool placed = spatial != null && (spatial.HasPoseEstimate ||
+                (spatial.localPreviewWithoutUwb && spatial.PreviewPlaced));
+            bool directionKnown = spatial != null && spatial.PreviewHeadingAligned &&
+                (receiver == null || receiver.HasUsablePanReference);
+            axesRoot.gameObject.SetActive(showScannerAxes && placed);
+            for (int axis = 0; axis < scannerAxes.Length; axis++)
+                if (scannerAxes[axis] != null)
+                    scannerAxes[axis].enabled = axis == 1 || directionKnown;
+            // Firmware already includes pan in points. Only the head indicator
+            // rotates here; the unknown-heading indicator stays vertical in AR.
+            float pan = receiver != null && receiver.HasFreshStatus
+                ? receiver.status.panDegrees : 0f;
+            if (directionKnown)
+                axesRoot.localRotation = Quaternion.Euler(pointPitchOffset, pointYawOffset, pointRollOffset) *
+                    Quaternion.Euler(0f, pan, 0f);
+            else axesRoot.rotation = Quaternion.identity;
+        }
+
         private void ProcessScanPoint(ScanPointData data)
         {
+            if (spatial != null && !spatial.CanAcceptPoints) return;
+            if (rejectWeakLidarReturns && data.HasWeakLidarSignal)
+            {
+                weakLidarDiscardedPoints++;
+                return;
+            }
             // Coordenadas calculadas no ESP32-S3 (mm -> metros)
             Vector3 localPos = new Vector3(data.posX_mm / 1000.0f, data.posY_mm / 1000.0f, data.posZ_mm / 1000.0f);
-
-            float sqrDist = localPos.sqrMagnitude;
-            if (sqrDist < 0.02f || sqrDist > 400.0f) return; // Fora do alcance seguro (15cm a 20m)
-
-            // Registro de extremos térmicos
-            if (data.temperatureC < observedMinTemp) observedMinTemp = data.temperatureC;
-            if (data.temperatureC > observedMaxTemp) observedMaxTemp = data.temperatureC;
-
-            // Otimização LOD Planar: se for superfície planar (parede/armário) e não for quente, decima pontos coplanares
-            bool isHotspot = (data.temperatureC >= hotspotThresholdTemp) || (data.surfaceFlags == 2);
-            if (enablePlanarLOD && (data.surfaceFlags == 1) && !isHotspot)
+            // A hipótese de sentido do ângulo vertical ainda não foi confirmada
+            // com um alvo conhecido. Espelhar em torno do centro óptico preserva
+            // seus 50 mm acima do pan e permite a comparação no próprio visor.
+            if (invertVerticalLidar)
+                localPos.y = 2f * lidarOpticalHeight - localPos.y;
+            if (pointPitchOffset != 0.0f || pointYawOffset != 0.0f || pointRollOffset != 0.0f)
             {
-                planarCounter++;
-                if (planarCounter % planarDecimationStep != 0)
-                {
-                    return; // Descarta ponto redundante na mesma face plana
-                }
+                localPos = Quaternion.Euler(pointPitchOffset, pointYawOffset, pointRollOffset) * localPos;
             }
 
-            // Determina a cor com base no modo visual e transparência de paredes
-            Color32 color = CalculatePointColor(data, isHotspot);
+            float sqrDist = localPos.sqrMagnitude;
+            if (float.IsNaN(sqrDist) || float.IsInfinity(sqrDist) ||
+                ((data.surfaceFlags & ScanPointData.ThermalUnavailableFlag) == 0 &&
+                    (float.IsNaN(data.temperatureC) || float.IsInfinity(data.temperatureC))) ||
+                sqrDist < 0.0225f || sqrDist > 400.0f) return;
+            Vector3 worldPos = pointCloudRoot != null ? pointCloudRoot.TransformPoint(localPos) : localPos;
+            Vector3 scannerPosition = pointCloudRoot != null ? pointCloudRoot.position : transform.position;
+            Vector3 viewDirection = (scannerPosition - worldPos).normalized;
+            Vector3 cameraPosition = spatial != null && spatial.arCameraTransform != null
+                ? spatial.arCameraTransform.position : Camera.main != null ? Camera.main.transform.position : scannerPosition;
+
+            // Registro de extremos térmicos
+            if (HasThermalMeasurement(data))
+            {
+                if (data.temperatureC < observedMinTemp) observedMinTemp = data.temperatureC;
+                if (data.temperatureC > observedMaxTemp) observedMaxTemp = data.temperatureC;
+            }
 
             // Voxel Grid Hash Key
             Vector3Int voxelKey = new Vector3Int(
-                Mathf.FloorToInt(localPos.x / voxelGridSize),
-                Mathf.FloorToInt(localPos.y / voxelGridSize),
-                Mathf.FloorToInt(localPos.z / voxelGridSize)
+                Mathf.FloorToInt(worldPos.x / Mathf.Max(0.001f, voxelGridSize)),
+                Mathf.FloorToInt(worldPos.y / Mathf.Max(0.001f, voxelGridSize)),
+                Mathf.FloorToInt(worldPos.z / Mathf.Max(0.001f, voxelGridSize))
             );
 
             if (voxelToIndex.TryGetValue(voxelKey, out int existingIndex))
             {
-                // Atualiza célula existente
-                pointsBuffer[existingIndex].color = color;
-                pointsBuffer[existingIndex].temperature = data.temperatureC;
-                pointsBuffer[existingIndex].surfaceFlags = data.surfaceFlags;
-                particlesBuffer[existingIndex].startColor = color;
-                bufferDirty = true;
-            }
-            else if (activePointsCount < maxPoints)
-            {
-                // Novo ponto na nuvem
-                int newIndex = activePointsCount;
-                pointsBuffer[newIndex] = new StoredPoint
+                // Independent LiDAR returns have no persistent point identity.
+                // Average only samples of the same world voxel; a position
+                // Kalman filter across unrelated rays would join surfaces.
+                StoredPoint existing = pointsBuffer[existingIndex];
+                int observations = Mathf.Min(32, existing.observations + 1);
+                existing.worldPosition = Vector3.Lerp(existing.worldPosition, worldPos,
+                    1f / observations);
+                existing.observations = (byte)observations;
+                pointsBuffer[existingIndex] = existing;
+                bool wasThermal = (pointsBuffer[existingIndex].surfaceFlags & ScanPointData.ThermalUnavailableFlag) == 0 &&
+                    !float.IsNaN(pointsBuffer[existingIndex].temperature);
+                // Um novo feixe sem térmica não apaga uma medição real do mesmo voxel.
+                if (!HasThermalMeasurement(data) &&
+                    (pointsBuffer[existingIndex].surfaceFlags & ScanPointData.ThermalUnavailableFlag) == 0)
                 {
-                    localPosition = localPos,
-                    color = color,
-                    temperature = data.temperatureC,
-                    surfaceFlags = data.surfaceFlags
-                };
-
-                particlesBuffer[newIndex].position = localPos;
-                particlesBuffer[newIndex].startColor = color;
-                particlesBuffer[newIndex].startSize = isHotspot ? pointSize * 1.3f : pointSize;
-                particlesBuffer[newIndex].remainingLifetime = float.MaxValue;
-
-                voxelToIndex[voxelKey] = newIndex;
-                activePointsCount++;
+                    data.temperatureC = pointsBuffer[existingIndex].temperature;
+                    data.surfaceFlags = (byte)((data.surfaceFlags & ~(ScanPointData.ThermalUnavailableFlag | 2)) |
+                        (pointsBuffer[existingIndex].surfaceFlags & 2));
+                }
+                // Atualiza célula existente
+                pointsBuffer[existingIndex].rgb = new Color32(data.r, data.g, data.b, 255);
+                pointsBuffer[existingIndex].temperature = HasThermalMeasurement(data) ? data.temperatureC : float.NaN;
+                pointsBuffer[existingIndex].surfaceFlags = data.surfaceFlags;
+                if (wasThermal != HasThermalMeasurement(data))
+                    activeThermalPointsCount += HasThermalMeasurement(data) ? 1 : -1;
+                Color32 color = PointColor(pointsBuffer[existingIndex].temperature, data.surfaceFlags);
+                color.a = (byte)(255 * pointOpacity);
+                particlesBuffer[existingIndex].startColor = color;
+                particlesBuffer[existingIndex].startSize =
+                    VisibleFromCamera(existing.viewDirection, existing.worldPosition, cameraPosition) &&
+                    !lodCovered[existingIndex] ? pointSize : 0f;
+                particlesBuffer[existingIndex].position = existing.worldPosition;
                 bufferDirty = true;
-            }
-        }
-
-        private Color32 CalculatePointColor(ScanPointData data, bool isHotspot)
-        {
-            Color32 baseColor;
-
-            switch (visualMode)
-            {
-                case VisualizationMode.RgbPhotoReal:
-                    baseColor = new Color32(data.r, data.g, data.b, 255);
-                    break;
-
-                case VisualizationMode.ThermalOnly:
-                    baseColor = EvaluateThermalColor(data.temperatureC);
-                    break;
-
-                case VisualizationMode.HybridThermalXRay:
-                default:
-                    if (isHotspot)
-                    {
-                        // Destaque térmico vivo (alaranjado/amarelo/branco)
-                        baseColor = EvaluateThermalColor(data.temperatureC);
-                    }
-                    else
-                    {
-                        // Cor real RGB com saturação normal
-                        baseColor = new Color32(data.r, data.g, data.b, 255);
-                    }
-                    break;
-            }
-
-            // Aplicação da Transparência de Paredes (X-Ray)
-            if (!isHotspot && (data.surfaceFlags == 1 || data.temperatureC < hotspotThresholdTemp))
-            {
-                // Aplica a opacidade configurada na parede fria (permite ver através dela)
-                byte alpha = (byte)(Mathf.Clamp01(wallOpacity) * 255f);
-                baseColor.a = alpha;
+                lodDirty = true;
             }
             else
             {
-                baseColor.a = 255; // Hotspots sempre 100% visíveis
+                int targetIndex;
+                if (activePointsCount < pointsBuffer.Length)
+                {
+                    targetIndex = activePointsCount++;
+                }
+                else
+                {
+                    // Buffer circular quando atinge maxPoints:
+                    targetIndex = nextReplacementIndex;
+                    nextReplacementIndex = (nextReplacementIndex + 1) % pointsBuffer.Length;
+
+                    // Remove chave antiga do dicionário para evitar crescimento de memória (Memory Leak Zero)
+                    voxelToIndex.Remove(pointsBuffer[targetIndex].voxelKey);
+                    if ((pointsBuffer[targetIndex].surfaceFlags & ScanPointData.ThermalUnavailableFlag) == 0 &&
+                        !float.IsNaN(pointsBuffer[targetIndex].temperature)) activeThermalPointsCount--;
+                }
+
+                if (HasThermalMeasurement(data)) activeThermalPointsCount++;
+
+                pointsBuffer[targetIndex] = new StoredPoint
+                {
+                    worldPosition = worldPos,
+                    viewDirection = viewDirection,
+                    rgb = new Color32(data.r, data.g, data.b, 255),
+                    temperature = HasThermalMeasurement(data) ? data.temperatureC : float.NaN,
+                    surfaceFlags = data.surfaceFlags,
+                    voxelKey = voxelKey,
+                    observations = 1
+                };
+
+                Color32 color = PointColor(pointsBuffer[targetIndex].temperature, data.surfaceFlags);
+                color.a = (byte)(255 * pointOpacity);
+                particlesBuffer[targetIndex].position = worldPos;
+                particlesBuffer[targetIndex].startColor = color;
+                lodCovered[targetIndex] = false;
+                particlesBuffer[targetIndex].startSize =
+                    VisibleFromCamera(viewDirection, worldPos, cameraPosition) ? pointSize : 0f;
+                particlesBuffer[targetIndex].remainingLifetime = float.MaxValue;
+
+                voxelToIndex[voxelKey] = targetIndex;
+                bufferDirty = true;
+                lodDirty = true;
             }
-
-            return baseColor;
         }
 
-        private Color32 EvaluateThermalColor(float tempC)
+        private static bool HasThermalMeasurement(ScanPointData data)
         {
-            float t = Mathf.InverseLerp(minTemperature, maxTemperature, tempC);
-            switch (colormap)
-            {
-                case ThermalColormap.Ironbow: return EvaluateIronbow(t);
-                case ThermalColormap.Jet: return EvaluateJet(t);
-                case ThermalColormap.Turbo: return EvaluateTurbo(t);
-                case ThermalColormap.Hot: return EvaluateHot(t);
-                default: return EvaluateIronbow(t);
-            }
-        }
-
-        private Color32 EvaluateIronbow(float t)
-        {
-            t = Mathf.Clamp01(t);
-            float r, g, b;
-            if (t < 0.2f) { float lt = t / 0.2f; r = Mathf.Lerp(0f, 0.2f, lt); g = 0f; b = Mathf.Lerp(0.2f, 0.6f, lt); }
-            else if (t < 0.45f) { float lt = (t - 0.2f) / 0.25f; r = Mathf.Lerp(0.2f, 0.8f, lt); g = Mathf.Lerp(0f, 0.1f, lt); b = Mathf.Lerp(0.6f, 0.5f, lt); }
-            else if (t < 0.75f) { float lt = (t - 0.45f) / 0.3f; r = Mathf.Lerp(0.8f, 1.0f, lt); g = Mathf.Lerp(0.1f, 0.65f, lt); b = Mathf.Lerp(0.5f, 0.05f, lt); }
-            else { float lt = (t - 0.75f) / 0.25f; r = 1.0f; g = Mathf.Lerp(0.65f, 1.0f, lt); b = Mathf.Lerp(0.05f, 1.0f, lt); }
-            return new Color32((byte)(r * 255f), (byte)(g * 255f), (byte)(b * 255f), 255);
-        }
-
-        private Color32 EvaluateJet(float t)
-        {
-            t = Mathf.Clamp01(t);
-            float r = Mathf.Clamp01(1.5f - Mathf.Abs(t * 4.0f - 3.0f));
-            float g = Mathf.Clamp01(1.5f - Mathf.Abs(t * 4.0f - 2.0f));
-            float b = Mathf.Clamp01(1.5f - Mathf.Abs(t * 4.0f - 1.0f));
-            return new Color32((byte)(r * 255f), (byte)(g * 255f), (byte)(b * 255f), 255);
-        }
-
-        private Color32 EvaluateTurbo(float t)
-        {
-            t = Mathf.Clamp01(t);
-            float r = 0.1357f + t * (4.5974f + t * (-42.3278f + t * (130.5887f + t * (-150.5665f + t * 58.1375f))));
-            float g = 0.0914f + t * (2.1856f + t * (4.8052f + t * (-14.0195f + t * (4.2109f + t * 2.7747f))));
-            float b = 0.1067f + t * (12.5732f + t * (-86.0744f + t * (246.5765f + t * (-282.8483f + t * 110.2641f))));
-            return new Color32((byte)(Mathf.Clamp01(r) * 255f), (byte)(Mathf.Clamp01(g) * 255f), (byte)(Mathf.Clamp01(b) * 255f), 255);
-        }
-
-        private Color32 EvaluateHot(float t)
-        {
-            t = Mathf.Clamp01(t);
-            float r = Mathf.Clamp01(t * 2.5f);
-            float g = Mathf.Clamp01((t - 0.35f) * 2.5f);
-            float b = Mathf.Clamp01((t - 0.75f) * 4.0f);
-            return new Color32((byte)(r * 255f), (byte)(g * 255f), (byte)(b * 255f), 255);
+            return (data.surfaceFlags & ScanPointData.ThermalUnavailableFlag) == 0 &&
+                !float.IsNaN(data.temperatureC) && !float.IsInfinity(data.temperatureC);
         }
 
         private void UpdateParticles()
@@ -319,45 +421,161 @@ namespace ArScanner.Rendering
             }
         }
 
-        public void SetWallOpacity(float opacity)
+        private static bool VisibleFromCamera(Vector3 observedFront, Vector3 position,
+            Vector3 cameraPosition)
         {
-            wallOpacity = opacity;
-            RecalculateColors();
+            return observedFront.sqrMagnitude < .01f ||
+                Vector3.Dot(observedFront, cameraPosition - position) > .01f;
         }
 
-        public void SetVisualizationMode(VisualizationMode mode)
-        {
-            visualMode = mode;
-            RecalculateColors();
-        }
-
-        public void RecalculateColors()
+        private void RefreshPointVisibility(Vector3 cameraPosition)
         {
             for (int i = 0; i < activePointsCount; i++)
-            {
-                ScanPointData dummy = new ScanPointData
-                {
-                    temperatureC = pointsBuffer[i].temperature,
-                    r = pointsBuffer[i].color.r,
-                    g = pointsBuffer[i].color.g,
-                    b = pointsBuffer[i].color.b,
-                    surfaceFlags = pointsBuffer[i].surfaceFlags
-                };
+                particlesBuffer[i].startSize = !lodCovered[i] &&
+                    VisibleFromCamera(pointsBuffer[i].viewDirection,
+                        pointsBuffer[i].worldPosition, cameraPosition) ? pointSize : 0f;
+            bufferDirty = true;
+        }
 
-                bool isHotspot = (dummy.temperatureC >= hotspotThresholdTemp) || (dummy.surfaceFlags == 2);
-                Color32 c = CalculatePointColor(dummy, isHotspot);
-                pointsBuffer[i].color = c;
-                particlesBuffer[i].startColor = c;
+        private void RebuildSurfaceLod(Vector3 cameraPosition)
+        {
+            lodDirty = false;
+            nextLodTime = Time.unscaledTime + 2f;
+            lastLodCameraPosition = cameraPosition;
+            if (lodMesh != null) { Destroy(lodMesh); lodMesh = null; }
+            surfaceLodPolygons = 0;
+            surfaceLodMergedPoints = 0;
+            if (lodObject == null) return;
+            lodObject.SetActive(enableSurfaceLod);
+            bool[] covered = null;
+            if (enableSurfaceLod && activePointsCount >= 8)
+            {
+                var samples = new SurfaceLodBuilder.Sample[activePointsCount];
+                for (int i = 0; i < activePointsCount; i++)
+                    samples[i] = new SurfaceLodBuilder.Sample {
+                        position=pointsBuffer[i].worldPosition,
+                        viewDirection=pointsBuffer[i].viewDirection,
+                        color=WithOpacity(PointColor(pointsBuffer[i].temperature,pointsBuffer[i].surfaceFlags)),
+                        temperature=pointsBuffer[i].temperature,
+                        hasThermal=(pointsBuffer[i].surfaceFlags & ScanPointData.ThermalUnavailableFlag)==0 &&
+                            !float.IsNaN(pointsBuffer[i].temperature)
+                    };
+                lodMesh = SurfaceLodBuilder.Build(samples,cameraPosition,lodNearMeters,lodFarMeters,
+                    lodTileSize,lodPlaneTolerance,lodMaxThermalSpreadC,
+                    out covered,out surfaceLodPolygons);
+                lodFilter.sharedMesh = lodMesh;
             }
-            UpdateParticles();
+            else lodFilter.sharedMesh = null;
+            for (int i = 0; i < activePointsCount; i++)
+            {
+                bool merged = covered != null && covered[i];
+                lodCovered[i] = merged;
+                particlesBuffer[i].startSize = !merged &&
+                    VisibleFromCamera(pointsBuffer[i].viewDirection,
+                        pointsBuffer[i].worldPosition, cameraPosition) ? pointSize : 0f;
+                if (merged) surfaceLodMergedPoints++;
+            }
+            bufferDirty = true;
+        }
+
+        private Color32 WithOpacity(Color32 color)
+        {
+            color.a = (byte)(255*pointOpacity);
+            return color;
+        }
+
+        public static Color32 ThermalPalette(float temperatureC, float minC, float maxC)
+        {
+            float t = Mathf.Clamp01((temperatureC-minC)/Mathf.Max(1f, maxC-minC));
+            Color c;
+            if (t < .25f) c = Color.Lerp(new Color(0f, .02f, .28f), Color.cyan, t*4f);
+            else if (t < .5f) c = Color.Lerp(Color.cyan, Color.yellow, (t-.25f)*4f);
+            else if (t < .75f) c = Color.Lerp(Color.yellow, Color.red, (t-.5f)*4f);
+            else c = Color.Lerp(Color.red, Color.white, (t-.75f)*4f);
+            return (Color32)c;
+        }
+
+        // Absolute labels make colors comparable between scans. A warm body
+        // should remain red even when the rest of the room is relatively cool.
+        public static Color32 AbsoluteThermalPalette(float temperatureC)
+        {
+            Color deepBlue = new Color(0f, .02f, .28f);
+            if (temperatureC <= 20f) return (Color32)deepBlue;
+            if (temperatureC < 27f) return (Color32)Color.Lerp(deepBlue, Color.cyan, (temperatureC-20f)/7f);
+            if (temperatureC < 31f) return (Color32)Color.Lerp(Color.cyan, Color.yellow, (temperatureC-27f)/4f);
+            if (temperatureC < 35f) return (Color32)Color.Lerp(Color.yellow, Color.red, (temperatureC-31f)/4f);
+            if (temperatureC < 45f) return (Color32)Color.Lerp(Color.red, Color.white, (temperatureC-35f)/10f);
+            return (Color32)Color.white;
+        }
+
+        private Color32 PointColor(float temperatureC, byte flags)
+        {
+            // Firmware calibration currently registers the thermal pixels against
+            // the inverted vertical LiDAR geometry used by the default viewer.
+            return showThermalColors && invertVerticalLidar &&
+                (flags & ScanPointData.ThermalUnavailableFlag) == 0 &&
+                !float.IsNaN(temperatureC) && !float.IsInfinity(temperatureC)
+                ? (useAbsoluteThermalScale
+                    ? AbsoluteThermalPalette(temperatureC)
+                    : ThermalPalette(temperatureC, thermalDisplayMinC, thermalDisplayMaxC))
+                : GeometryColor;
+        }
+
+        // ARCore pode refinar a pose da âncora após o celular se deslocar. Os
+        // pontos usam simulationSpace.World, então precisam seguir essa revisão.
+        // Movimento real do scanner via UWB não chama este método.
+        public bool RebaseWorldPoints(Pose oldAnchor, Pose newAnchor)
+        {
+            if (activePointsCount == 0) return true;
+            if (Vector3.Distance(oldAnchor.position, newAnchor.position) < .001f &&
+                Quaternion.Angle(oldAnchor.rotation, newAnchor.rotation) < .05f) return false;
+            Quaternion deltaRotation = newAnchor.rotation * Quaternion.Inverse(oldAnchor.rotation);
+            voxelToIndex.Clear();
+            for (int i = 0; i < activePointsCount; i++)
+            {
+                Vector3 position = newAnchor.position + deltaRotation *
+                    (pointsBuffer[i].worldPosition - oldAnchor.position);
+                pointsBuffer[i].worldPosition = position;
+                pointsBuffer[i].viewDirection = deltaRotation * pointsBuffer[i].viewDirection;
+                particlesBuffer[i].position = position;
+                Vector3Int key = new Vector3Int(
+                    Mathf.FloorToInt(position.x / voxelGridSize),
+                    Mathf.FloorToInt(position.y / voxelGridSize),
+                    Mathf.FloorToInt(position.z / voxelGridSize));
+                pointsBuffer[i].voxelKey = key;
+                voxelToIndex[key] = i;
+            }
+            bufferDirty = true;
+            lodDirty = true;
+            nextLodTime = 0f;
+            return true;
+        }
+
+        public void SetRejectWeakLidarReturns(bool reject)
+        {
+            if (rejectWeakLidarReturns == reject) return;
+            rejectWeakLidarReturns = reject;
+            // Não mistura pontos coletados com regras diferentes nem pacotes antigos.
+            ClearPointCloud();
         }
 
         public void ClearPointCloud()
         {
             activePointsCount = 0;
+            weakLidarDiscardedPoints = 0;
+            hasVisibilityCameraPosition = false;
+            nextReplacementIndex = 0;
             voxelToIndex.Clear();
+            bufferDirty = false;
+            if (receiver != null)
+                while (receiver.incomingPoints.TryDequeue(out _)) { }
             observedMinTemp = 999f;
             observedMaxTemp = -999f;
+            activeThermalPointsCount = 0;
+            surfaceLodPolygons = surfaceLodMergedPoints = 0;
+            lodDirty = true;
+            nextLodTime = 0f;
+            if (lodMesh != null) lodMesh.Clear();
             if (targetParticleSystem != null) targetParticleSystem.Clear();
         }
 
@@ -374,6 +592,8 @@ namespace ArScanner.Rendering
             sb.AppendLine("ply");
             sb.AppendLine("format ascii 1.0");
             sb.AppendLine("comment ArScanner TCC Multi-Modal Export (RGB + Thermal + Flags)");
+            sb.AppendLine("comment flags bit 2: thermal unavailable; temperature nan means not measured");
+            sb.AppendLine("comment flags bit 3: LiDAR weak signal warning; not a confirmed range error");
             sb.AppendLine($"element vertex {activePointsCount}");
             sb.AppendLine("property float x");
             sb.AppendLine("property float y");
@@ -387,17 +607,27 @@ namespace ArScanner.Rendering
 
             for (int i = 0; i < activePointsCount; i++)
             {
-                Vector3 p = pointsBuffer[i].localPosition;
-                Color32 c = pointsBuffer[i].color;
+                Vector3 p = pointsBuffer[i].worldPosition;
+                Color32 c = PointColor(pointsBuffer[i].temperature, pointsBuffer[i].surfaceFlags);
                 float temp = pointsBuffer[i].temperature;
+                string temperatureText = float.IsNaN(temp) ? "nan" : temp.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
                 byte f = pointsBuffer[i].surfaceFlags;
                 sb.AppendLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                    "{0:F4} {1:F4} {2:F4} {3} {4} {5} {6:F2} {7}",
-                    p.x, p.y, p.z, c.r, c.g, c.b, temp, f));
+                    "{0:F4} {1:F4} {2:F4} {3} {4} {5} {6} {7}",
+                    p.x, p.y, p.z, c.r, c.g, c.b, temperatureText, f));
             }
 
             File.WriteAllText(filePath, sb.ToString());
             return filePath;
+        }
+
+        private void OnDestroy()
+        {
+            if (axesRoot != null) Destroy(axesRoot.gameObject);
+            if (lodMesh != null) Destroy(lodMesh);
+            if (lodObject != null) Destroy(lodObject);
+            if (pointMaterial != null) Destroy(pointMaterial);
+            if (surfaceMaterial != null) Destroy(surfaceMaterial);
         }
     }
 }

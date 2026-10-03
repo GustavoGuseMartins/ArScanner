@@ -6,55 +6,73 @@ void LidarDriver::begin() {
     // Garante que o MOSFET IRLZ44N (Q1) comece desligado para evitar picos de corrente no boot
     pinMode(LIDAR_MOSFET_GATE_PIN, OUTPUT);
     digitalWrite(LIDAR_MOSFET_GATE_PIN, LOW);
+    ledcSetup(LIDAR_PWM_CHANNEL, 1000, 8);
+    ledcAttachPin(LIDAR_MOSFET_GATE_PIN, LIDAR_PWM_CHANNEL);
 
-    // Inicializa UART1 com RX=GPIO3 e TX=GPIO1
+    // ~400 ms de margem a 115200 baud para aquisições I2C/câmera mais lentas.
+    // O consumidor ainda precisa drenar a UART continuamente durante o scan.
+    lidarSerial.setRxBufferSize(4096);
+    // Inicializa UART1 (RX = LIDAR_RX_PIN [GPIO1], TX = LIDAR_TX_PIN [GPIO3])
     lidarSerial.begin(LIDAR_BAUD, SERIAL_8N1, LIDAR_RX_PIN, LIDAR_TX_PIN);
+    resetInput();
+    Serial.printf("[LiDAR] UART inicializada: RX=GPIO%d, TX=GPIO%d, Baud=%d\n", LIDAR_RX_PIN, LIDAR_TX_PIN, LIDAR_BAUD);
 
-    // Aciona o motor do LiDAR via PWM no Gate do MOSFET
-    setMotorSpeed(200); // PWM ~78% para estabilizar rotação (~5-7 Hz)
+    // Motor permanece DESLIGADO no boot até comando explícito do celular (START_SCAN)
+    stopMotor();
 }
 
 void LidarDriver::setMotorSpeed(uint8_t pwmVal) {
-    analogWrite(LIDAR_MOSFET_GATE_PIN, pwmVal);
+    if (pwmVal > 0) {
+        ledcWrite(LIDAR_PWM_CHANNEL, pwmVal);
+    } else {
+        stopMotor();
+    }
 }
 
 void LidarDriver::stopMotor() {
-    analogWrite(LIDAR_MOSFET_GATE_PIN, 0);
-    digitalWrite(LIDAR_MOSFET_GATE_PIN, LOW);
+    ledcWrite(LIDAR_PWM_CHANNEL, 0);
+}
+
+void LidarDriver::resetInput() {
+    nextSample = 4;
+    parser.reset();
+    hasPacket = false;
+    // Descarta apenas o que já estava na fila, sem aguardar novos bytes.
+    int buffered = lidarSerial.available();
+    while (buffered-- > 0) lidarSerial.read();
 }
 
 bool LidarDriver::readPacket(LidarMeasurement &measurement) {
-    // Parser para pacotes LiDAR Roborock/Neato/XV11 (4 bytes por amostra ou pacote de 22 bytes)
-    if (lidarSerial.available() >= 4) {
-        uint8_t header = lidarSerial.read();
-        if (header == 0xFA) { // Byte de início padrão de pacotes LiDAR
-            uint8_t index = lidarSerial.read();
-            uint8_t speedL = lidarSerial.read();
-            uint8_t speedH = lidarSerial.read();
-            (void)speedL;
-            (void)speedH;
+    measurement = {};
+    // Cada pacote completo entrega quatro amostras em chamadas consecutivas.
+    // Não bloqueia esperando bytes e preserva pacotes fragmentados entre chamadas.
+    int bytesBudget = 4096;
+    for (;;) {
+        while (nextSample < 4) {
+            measurement = pendingPacket.samples[nextSample++];
+            if (measurement.isValid) return true;
+        }
 
-            // Calcular ângulo a partir do índice de pacote (0xA0 a 0xF9 -> 0° a 359°)
-            float baseAngle = (index - 0xA0) * 4.0f;
-
-            // Ler dados da amostra
-            if (lidarSerial.available() >= 4) {
-                uint8_t byte0 = lidarSerial.read();
-                uint8_t byte1 = lidarSerial.read();
-                uint8_t byte2 = lidarSerial.read();
-                uint8_t byte3 = lidarSerial.read();
-                (void)byte2;
-                (void)byte3;
-
-                uint16_t dist = (byte1 << 8) | byte0;
-                bool invalidBit = (byte1 & 0x80) != 0;
-
-                measurement.angleDeg = baseAngle;
-                measurement.distanceMm = (float)(dist & 0x3FFF);
-                measurement.isValid = !invalidBit && (measurement.distanceMm > 100.0f);
-                return measurement.isValid;
+        if (bytesBudget-- <= 0 || lidarSerial.available() <= 0) return false;
+        const int value = lidarSerial.read();
+        if (value < 0) return false;
+        if (parser.feed(static_cast<uint8_t>(value), pendingPacket)) {
+            lastPacketMs = millis();
+            hasPacket = true;
+            // No hardware timestamp: estimate acquisition from UART backlog,
+            // serialization time and measured rotor speed. Calibrate fixed latency.
+            const uint32_t now = micros();
+            const float rpm = parser.diagnostics().lastRpm;
+            if (rpm < 60.0f || rpm > 1000.0f) continue;
+            const uint32_t queuedUs = (uint32_t)((uint64_t)lidarSerial.available()*10000000ULL/LIDAR_BAUD);
+            const uint32_t frameUs = 22U*10000000U/LIDAR_BAUD;
+            for (int i = 0; i < 4; ++i) {
+                uint32_t age = queuedUs + frameUs + LIDAR_LATENCY_US +
+                    (uint32_t)((3-i)*60000000.0f/(rpm*360.0f));
+                pendingPacket.samples[i].sampleTimeUs = now-age;
+                if (age > LIDAR_MAX_AGE_US) pendingPacket.samples[i].isValid = false;
             }
+            nextSample = 0;
         }
     }
-    return false;
 }

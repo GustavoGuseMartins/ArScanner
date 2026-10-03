@@ -12,6 +12,7 @@ namespace ArScanner
     [RequireComponent(typeof(UwbAnchorManager))]
     [RequireComponent(typeof(PointCloudSimulator))]
     [RequireComponent(typeof(ArScannerHUD))]
+    [DefaultExecutionOrder(-200)]
     public class ArScannerController : MonoBehaviour
     {
         [Header("Configuração Rápida de Inicialização")]
@@ -24,6 +25,9 @@ namespace ArScanner
         private UwbAnchorManager anchorManager;
         private PointCloudSimulator simulator;
         private ArScannerHUD hud;
+        private UwbTransportMode hardwareTransport;
+        private bool hardwareAnchorMountedOnPhone;
+        private bool hasStarted;
 
         private void Awake()
         {
@@ -31,8 +35,16 @@ namespace ArScanner
             uwbReceiver = GetComponent<UwbDataReceiver>();
             pointRenderer = GetComponent<ThermalPointCloudRenderer>();
             anchorManager = GetComponent<UwbAnchorManager>();
+            if (GetComponent<ScannerVisualPoseObserver>() == null)
+                gameObject.AddComponent<ScannerVisualPoseObserver>();
             simulator = GetComponent<PointCloudSimulator>();
             hud = GetComponent<ArScannerHUD>();
+            anchorManager.InitializeReferences();
+            hardwareTransport = uwbReceiver.transportMode == UwbTransportMode.Simulated
+                ? UwbTransportMode.USB : uwbReceiver.transportMode;
+            hardwareAnchorMountedOnPhone = anchorManager.anchorMountedOnPhone;
+            tcpReceiver.scannerIp = GlobalData.IpAlvo;
+            tcpReceiver.scannerPort = GlobalData.Porta;
 
             // Configuração de referências mútuas
             pointRenderer.pointCloudRoot = anchorManager.pointCloudRootContainer;
@@ -42,24 +54,34 @@ namespace ArScanner
             hud.anchorManager = anchorManager;
             hud.simulator = simulator;
 
-            if (simulator != null)
-            {
-                if (GlobalData.IsSimulationMode)
-                {
-                    simulator.isSimulationActive = true;
-                }
+            bool simulate = GlobalData.IsSimulationMode;
 #if UNITY_EDITOR
-                else if (startInSimulatorModeOnEditor)
-                {
-                    simulator.isSimulationActive = true;
-                }
+            simulate |= !GlobalData.HasViewerModeSelection && startInSimulatorModeOnEditor;
 #endif
-            }
+            SetSimulationMode(simulate);
         }
 
         private void Start()
         {
+            hasStarted = true;
             Debug.Log("[ArScannerController] Sistema ArScanner inicializado com sucesso!");
+        }
+
+        public void SetSimulationMode(bool active)
+        {
+            simulator.isSimulationActive = active;
+            tcpReceiver.autoConnect = !active;
+            tcpReceiver.Disconnect();
+            uwbReceiver.StopReceiver();
+            uwbReceiver.transportMode = active ? UwbTransportMode.Simulated : hardwareTransport;
+            anchorManager.anchorMountedOnPhone = active ? false : hardwareAnchorMountedOnPhone;
+            pointRenderer.ClearPointCloud();
+            simulator.ResetSimulation();
+            if (hasStarted)
+            {
+                uwbReceiver.StartReceiver();
+                if (!active) tcpReceiver.ConnectToScanner();
+            }
         }
     }
 }

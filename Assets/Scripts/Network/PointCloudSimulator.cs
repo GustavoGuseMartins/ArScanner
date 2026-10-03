@@ -2,6 +2,7 @@ using UnityEngine;
 
 namespace ArScanner.Network
 {
+    [DefaultExecutionOrder(-150)]
     public class PointCloudSimulator : MonoBehaviour
     {
         [Header("Controle da Simulação")]
@@ -30,6 +31,14 @@ namespace ArScanner.Network
         private float currentBaseAngle = 0f;
         private float currentLidarAngle = 0f;
         private float pointAccumulator = 0f;
+        private readonly Vector3 roomCenter = new Vector3(0f, 1.35f, 1.7f);
+
+        public void ResetSimulation()
+        {
+            currentBaseAngle = 0f;
+            currentLidarAngle = 0f;
+            pointAccumulator = 0f;
+        }
 
         private void Awake()
         {
@@ -48,13 +57,13 @@ namespace ArScanner.Network
             float time = Time.time;
 
             // Simula hover suave do Drone via UWB
+            Vector3 simulatedDronePos = new Vector3(
+                Mathf.Sin(time * 0.5f) * 0.12f,
+                1.35f + Mathf.Sin(time * 1.1f) * 0.04f,
+                1.7f + Mathf.Cos(time * 0.4f) * 0.12f
+            );
             if (uwbReceiver != null)
             {
-                Vector3 simulatedDronePos = new Vector3(
-                    Mathf.Sin(time * 0.5f) * 0.12f,
-                    1.35f + Mathf.Sin(time * 1.1f) * 0.04f,
-                    1.7f + Mathf.Cos(time * 0.4f) * 0.12f
-                );
                 uwbReceiver.SetSimulatedPosition(simulatedDronePos);
             }
 
@@ -90,29 +99,31 @@ namespace ArScanner.Network
                     Mathf.Sin(lidarRad) * Mathf.Sin(baseRad)
                 ).normalized;
 
-                float distanceMeters = RaycastBox(Vector3.zero, rayDir, roomDimensions);
+                float distanceMeters = RaycastBox(simulatedDronePos - roomCenter, rayDir, roomDimensions);
+                // Alvo sintético dentro da sala: escolhe a primeira interseção visível.
+                float sphereDistance = RaycastSphere(simulatedDronePos, rayDir, heatSourceCenter, heatSourceRadius);
+                bool hitsHeatSource = sphereDistance > 0f && sphereDistance < distanceMeters;
+                if (hitsHeatSource) distanceMeters = sphereDistance;
                 distanceMeters += Random.Range(-0.004f, 0.004f); // Ruído realista de laser
                 if (distanceMeters < 0.15f) distanceMeters = 0.15f;
 
                 Vector3 hitPoint = rayDir * distanceMeters;
 
                 // Checa se o feixe atinge a fonte de calor cilíndrica/humana
-                float distToHeat = Vector3.Distance(hitPoint, heatSourceCenter);
                 float temp = ambientTemperature + Random.Range(-0.3f, 0.3f);
                 byte flags = 1; // Flag padrão = Superfície Planar/Parede fria
 
                 byte r = 210, g = 215, b = 220; // Cor da parede (RGB realista)
 
                 // Se atingir o chão
-                if (hitPoint.y <= -roomDimensions.y * 0.5f + 0.05f)
+                if ((simulatedDronePos + hitPoint).y <= roomCenter.y - roomDimensions.y * 0.5f + 0.05f)
                 {
                     r = 135; g = 105; b = 75; // Piso amadeirado/marrom
                 }
 
-                if (distToHeat < heatSourceRadius)
+                if (hitsHeatSource)
                 {
-                    float factor = 1.0f - (distToHeat / heatSourceRadius);
-                    temp = Mathf.Lerp(ambientTemperature, heatSourceTemperature, factor) + Random.Range(-0.2f, 0.2f);
+                    temp = heatSourceTemperature + Random.Range(-0.2f, 0.2f);
                     flags = 2; // Hotspot / Objeto de interesse
                     r = 255; g = 110; b = 60; // Cor visual do objeto quente
                 }
@@ -134,6 +145,16 @@ namespace ArScanner.Network
 
                 tcpReceiver.EnqueuePoint(pkt);
             }
+        }
+
+        private static float RaycastSphere(Vector3 origin, Vector3 direction, Vector3 center, float radius)
+        {
+            Vector3 offset = origin - center;
+            float b = Vector3.Dot(offset, direction);
+            float discriminant = b * b - (offset.sqrMagnitude - radius * radius);
+            if (discriminant < 0f) return -1f;
+            float distance = -b - Mathf.Sqrt(discriminant);
+            return distance > 0f ? distance : -1f;
         }
 
         private float RaycastBox(Vector3 origin, Vector3 dir, Vector3 boxSize)

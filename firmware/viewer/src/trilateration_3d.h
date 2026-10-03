@@ -6,7 +6,14 @@
 class Trilateration3D {
 public:
     Trilateration3D();
-    static bool calculatePosition(float d1, float d2, float d3, Vector3D &outPos);
+    bool calculatePosition(float d1, float d2, float d3, Vector3D &outPos);
+    void reset();
+    float estimatedPositionSigma = 0.0f;
+
+private:
+    Vector3D filtered;
+    float variance;
+    bool initialized;
 };
 
 #endif // TRILATERATION_3D_H
