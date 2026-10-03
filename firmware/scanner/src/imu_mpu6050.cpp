@@ -5,6 +5,10 @@
 namespace {
 constexpr uint8_t Address = 0x68;
 constexpr float DegreesPerRadian = 57.29577951308232f;
+// The assembled sensor shows roughly 0.1–1.3 dps of stationary noise. Keep
+// reference collection strict enough to reject a hand movement, while leaving
+// the active scan path free to rotate at the pan rate.
+constexpr float ReferenceGyroStillDps = 2.0f;
 bool readRegisters(uint8_t reg, uint8_t* data, uint8_t count) {
     Wire.beginTransmission(Address);
     Wire.write(reg);
@@ -170,9 +174,10 @@ void ImuSensor::updateOrientation(float panDegrees) {
     }
     const float gyroHead[3] = { sample.gyroY, -sample.gyroX, sample.gyroZ };
     const float gyroNorm = sqrtf(gyroHead[0]*gyroHead[0] + gyroHead[1]*gyroHead[1] + gyroHead[2]*gyroHead[2]);
-    // Gravity quality is the useful stationary test here. The head is expected
-    // to rotate during a scan, so a large pan gyro rate is not a fault.
-    orientationStationary = orientationGravityValid && isfinite(gyroNorm);
+    // Reference collection needs a genuinely still head. Once referenced, a
+    // pan-rate gyro value is expected and must not invalidate the scan.
+    orientationStationary = orientationGravityValid && isfinite(gyroNorm) &&
+        gyroNorm <= ReferenceGyroStillDps;
     uint32_t nowUs = micros();
     float dt = orientationLastUpdateUs ? uint32_t(nowUs - orientationLastUpdateUs) * 1e-6f : 0.f;
     orientationLastUpdateUs = nowUs;
