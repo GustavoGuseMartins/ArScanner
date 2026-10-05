@@ -33,7 +33,8 @@
 #define UWB_ANCHOR_2_ANTENNA_DELAY_TICKS 16384U
 #define UWB_ANCHOR_3_ANTENNA_DELAY_TICKS 16384U
 
-// Configuração de Wi-Fi e UDP para transmissão sem fio ao App Unity
+// Constantes legadas de Wi-Fi/UDP: o firmware normal envia dados por USB serial.
+// A bridge opcional no PC usa UDP; estas macros não ativam Wi-Fi na base.
 #define WIFI_SSID           "ArScanner_Net"
 #define WIFI_PASSWORD       "scanner123"
 #define UDP_BROADCAST_PORT  9999

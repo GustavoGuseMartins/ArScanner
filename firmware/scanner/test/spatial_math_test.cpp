@@ -121,6 +121,34 @@ static void ranging() {
     assert(!uwbDistance(1,2,3,4,meters));
     assert(!uwbDistance(0,1,1,1,meters));
 }
+static void thermalFramePose() {
+    using namespace ScanGeometry;
+    const Vec3 lidarOrigin = {0,.05f,.079f}, thermalOffset = {0,-.025f,.05f};
+    const Vec3 physicalHit = {2,.2f,-.6f};
+    float actualH, actualV, expectedH, expectedV;
+    for (int invert=0; invert<2; ++invert) {
+        assert(thermalAngles(physicalHit,lidarOrigin,thermalOffset,invert,
+            expectedH,expectedV,1));
+        assert(thermalAnglesAtFramePose(physicalHit,35,35,lidarOrigin,thermalOffset,
+            invert,actualH,actualV,1));
+        assert(near(actualH,expectedH) && near(actualV,expectedV));
+        // One fixed physical hit observed after the camera frame was taken.
+        // Include the full eccentric hit in the rotation, not just its ray.
+        Vec3 currentHit = yaw(physicalHit,-12);
+        assert(thermalAnglesAtFramePose(currentHit,12,0,lidarOrigin,thermalOffset,
+            invert,actualH,actualV,1));
+        assert(near(actualH,expectedH) && near(actualV,expectedV));
+        // Absolute pan wrap must have the same result as the short rotation.
+        assert(thermalAnglesAtFramePose(yaw(physicalHit,2),359,1,lidarOrigin,
+            thermalOffset,invert,actualH,actualV,1));
+        assert(near(actualH,expectedH) && near(actualV,expectedV));
+    }
+    actualH = actualV = -999;
+    assert(!thermalAnglesAtFramePose(physicalHit,NAN,0,lidarOrigin,thermalOffset,
+        false,actualH,actualV,1) && actualH == -999 && actualV == -999);
+    assert(!thermalAnglesAtFramePose(physicalHit,0,INFINITY,lidarOrigin,thermalOffset,
+        false,actualH,actualV,1));
+}
 static void trilateration() {
     using namespace UwbMath;
     Vec a[]={{.077,.035801,0},{0,0,0},{.154,0,0}};
@@ -189,4 +217,4 @@ static void parkingMotion() {
     advancePan(step,direction,running,parking,1,1,steps);
     assert(step==paused);
 }
-int main() { parkingMotion(); history(); geometry(); verticalMount(); ranging(); trilateration(); diagnostics(); puts("Spatial regression tests passed"); }
+int main() { parkingMotion(); history(); geometry(); verticalMount(); thermalFramePose(); ranging(); trilateration(); diagnostics(); puts("Spatial regression tests passed"); }

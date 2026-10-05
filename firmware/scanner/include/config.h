@@ -14,7 +14,7 @@
 #define I2C_SDA_PIN         47
 #define I2C_SCL_PIN         48
 #define I2C_FREQ            100000L  // Inicio conservador; a termica acelera apos inicializar.
-#define I2C_FAST_FREQ       400000L  // MLX90640 a 8 Hz; volta a 100 kHz se as leituras falharem.
+#define I2C_FAST_FREQ       400000L  // MLX90640 ate 16 subpaginas/s; volta a 100 kHz se as leituras falharem.
 
 // Barramento SPI (Módulo UWB Decawave DWM1000 - DWM1 Tag)
 #define UWB_MOSI_PIN        4   // GPIO4 - SPIMOSI
@@ -59,11 +59,12 @@
 
 // Medidas REAIS da montagem física (23/09/2026):
 // LiDAR vertical: ângulo 0° aponta para CIMA (+Y). Motor DC sem controle de posição.
-// Eixo óptico 50 mm acima do centro do eixo de pan; 90 mm à frente (excentricidade).
+// Eixo óptico 50 mm acima do pan. A referência física de 23/09 informou 90 mm
+// à frente; o código usa 79 mm nominais do modelo V2, ainda a conferir na unidade.
 #define LIDAR_ORIGIN_X_M    0.0f
 #define LIDAR_ORIGIN_Y_M    0.050f   // 50 mm acima do eixo pan (medido)
 #define LIDAR_ORIGIN_Z_M    0.079f   // 79 mm nominal no modelo 3D scanner_v2_montado.blend (centro da fenda Y=-79mm)
-#define LIDAR_MOUNT_YAW_DEG 90.0f    // Plano XY vertical, transversal aos 90 mm em +Z (confirmado).
+#define LIDAR_MOUNT_YAW_DEG 90.0f    // Plano XY vertical; orientação de montagem separada da origem óptica.
 #define LIDAR_ANGLE_SIGN    1.0f     // Provisorio: +1 faz raw 90 apontar -X; -1 faz apontar +X. Validar em bancada.
 #define LIDAR_ZERO_DEG      90.0f    // Ângulo 0° do protocolo aponta para cima (+Y); +90° corrige.
 #define LIDAR_LATENCY_US    0U       // Latência adicional do sensor, medir experimentalmente.
@@ -79,7 +80,11 @@
 #define TAG_PHYSICAL_OFFSET_Z_M 0.020f // 20 mm forward; rotates with the head.
 #define TAG_ON_ROTATING_HEAD true
 #define IMU_ON_ROTATING_HEAD true
-#define IMU_APPLY_TILT      false // Ativar SOMENTE após mapear eixos do MPU no pan=0.
+// A aplicação de pitch/roll é independente do acompanhamento yaw GY-25 no app.
+// Os ângulos nominais abaixo ainda exigem calibração física e ensaio da nuvem.
+#define IMU_APPLY_TILT      true // Aplica a inclinação filtrada expressa nos eixos da cabeça.
+#define IMU_MOUNT_NOMINAL_PITCH_DEG 16.2f // Referência nominal da PCB montada na cabeça.
+#define IMU_MOUNT_NOMINAL_ROLL_DEG  (-1.1f)
 #define CAMERA_EXTRINSICS_CALIBRATED false // RGB ainda sem alinhamento/pinagem simultânea.
 
 // Mapeamento dos eixos do MPU6050 (módulo azul, montado atrás do LiDAR no PCB).
@@ -155,6 +160,11 @@ static_assert(IMU_PITCH_AXIS != IMU_ROLL_AXIS, "Tilt axes must differ");
 // O relato de imagem no lado oposto motiva testar +X primeiro, ainda sem prova
 // do sinal fisico do LiDAR/lente em bancada.
 #define THERMAL_ORIENTATION_PROFILE_DEFAULT 1
+// Alvo unico: 8 quadros completos/s (16 subpaginas/s). Preferencias antigas
+// de taxa sao ignoradas. Overruns descartam a cópia incoerente sem reduzir o
+// alvo; o fallback de transporte pode reduzir clock/cadência. Alvo não é taxa medida.
+#define THERMAL_DEFAULT_FULL_FPS 8
+static_assert(THERMAL_DEFAULT_FULL_FPS == 8, "Thermal acquisition target must be 8 complete frames/s");
 // Offset da lente em coordenadas fisicas da cabeca, independente do perfil.
 #define THERMAL_OFFSET_X_M       0.0f
 #define THERMAL_OFFSET_Y_M      -0.025f

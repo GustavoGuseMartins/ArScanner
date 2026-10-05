@@ -25,7 +25,7 @@ namespace ArScanner.UI
         private string feedbackMessage = "";
         private float feedbackTimer = 0f;
         private Vector2 scrollPosRight = Vector2.zero;
-        private Vector2 scrollPosLeft = Vector2.zero;
+        private float controlsContentWidth;
         private bool thermalPreviewExpanded;
         private bool showDiagnostics;
         private bool showSensorDetails;
@@ -34,11 +34,13 @@ namespace ArScanner.UI
         private bool showThermalCalibration;
         private bool adjustPositionExpanded;
         private bool controlsCollapsed;
+        private static readonly float[] PointSizeMultipliers = { .25f, .5f, 1f, 2f, 3f, 4f };
+        private static readonly string[] PointSizeLabels = { "×1/4", "×1/2", "×1", "×2", "×3", "×4" };
 
         public struct HudLayout
         {
             public float scale;
-            public Rect safe, connections, controls, diagnostics, center, preview, feedback;
+            public Rect safe, connections, controls, center, preview, feedback;
         }
 
         // Screen.safeArea starts at bottom-left; IMGUI starts at top-left.
@@ -54,7 +56,7 @@ namespace ArScanner.UI
             float rightWidth = collapsed ? 150f : Mathf.Clamp(safe.width*.25f, 300f, 400f);
             float leftWidth = Mathf.Clamp(safe.width*.2f, 220f, 300f);
             Rect controls = new Rect(safe.xMax-margin-rightWidth, safe.y+margin, rightWidth,
-                collapsed ? 46f : Mathf.Min(680f, safe.height-2*margin));
+                collapsed ? 46f : safe.height-2*margin);
             Rect connections = new Rect(safe.x+margin, safe.y+margin, leftWidth, 215f);
             Rect center = Rect.MinMaxRect(connections.xMax+gap, safe.y+margin,
                 controls.x-gap, safe.yMax-margin);
@@ -64,8 +66,6 @@ namespace ArScanner.UI
                 previewWidth, previewHeight);
             return new HudLayout { scale=scale, safe=safe, controls=controls, connections=connections,
                 center=center, preview=preview,
-                diagnostics=new Rect(connections.x, connections.yMax+gap,
-                    Mathf.Min(340f, controls.x-connections.x-gap), Mathf.Max(1f, safe.yMax-margin-connections.yMax-gap)),
                 feedback=new Rect(center.center.x-Mathf.Min(480f, center.width)*.5f, safe.yMax-margin-60f,
                     Mathf.Min(480f, center.width), 60f) };
         }
@@ -75,6 +75,7 @@ namespace ArScanner.UI
         private GUIStyle saoBtnStyle;
         private GUIStyle saoBtnDangerStyle;
         private GUIStyle saoBtnActiveStyle;
+        private GUIStyle saoToggleStyle;
         private GUIStyle saoLabelStyle;
         private GUIStyle saoLabelTitleStyle;
         private GUIStyle saoLabelValueStyle;
@@ -176,6 +177,11 @@ namespace ArScanner.UI
             saoBtnActiveStyle.hover.background = MakeTex(64, 64, btnHoverBg);
             saoBtnActiveStyle.normal.textColor = Color.black;
 
+            saoToggleStyle = new GUIStyle(GUI.skin.toggle);
+            saoToggleStyle.fontSize = 15;
+            saoToggleStyle.wordWrap = true;
+            saoToggleStyle.normal.textColor = new Color(.85f, .9f, .95f);
+
             saoLabelStyle = new GUIStyle(GUI.skin.label);
             saoLabelStyle.normal.textColor = new Color(0.85f, 0.9f, 0.95f);
             saoLabelStyle.fontSize = 15;
@@ -210,9 +216,9 @@ namespace ArScanner.UI
             GUI.skin.button = saoBtnStyle;
             GUI.skin.box = saoBoxStyle;
             GUI.skin.label = saoLabelStyle;
+            GUI.skin.toggle = saoToggleStyle;
 
             DrawConnections(layout.connections);
-            if (showDiagnostics) DrawDiagnostics(layout.diagnostics);
             if (controlsCollapsed)
             {
                 if (GUI.Button(layout.controls, "Mostrar controles")) controlsCollapsed = false;
@@ -241,9 +247,7 @@ namespace ArScanner.UI
             {
                 GUILayout.Label(tcpReceiver.isConnected ? "Scanner Wi-Fi conectado" : "Scanner Wi-Fi desconectado",
                     saoLabelValueStyle);
-                if (!tcpReceiver.isConnected && GUILayout.Button("Reconectar scanner", GUILayout.Height(32)))
-                    tcpReceiver.ConnectToScanner();
-                else if (tcpReceiver.isConnected && !tcpReceiver.HasFreshStatus)
+                if (tcpReceiver.isConnected && !tcpReceiver.HasFreshStatus)
                     GUILayout.Label("Aguardando o estado do scanner.", saoLabelStyle);
             }
             if (uwbReceiver != null)
@@ -251,9 +255,6 @@ namespace ArScanner.UI
                 bool simulation = uwbReceiver.transportMode == UwbTransportMode.Simulated;
                 GUILayout.Label(simulation ? "Simulação no editor" : uwbReceiver.UsbHasRecentData
                     ? "Base USB-C recebendo dados" : "Base USB-C sem dados recentes", saoLabelStyle);
-                if (!simulation && !uwbReceiver.UsbHasRecentData &&
-                    GUILayout.Button("Autorizar USB novamente", GUILayout.Height(32)))
-                    uwbReceiver.RequestUsbPermissionAgain();
             }
             if (pointRenderer != null)
                 GUILayout.Label($"Nuvem: {pointRenderer.activePointsCount:N0} pontos", saoLabelStyle);
@@ -262,22 +263,30 @@ namespace ArScanner.UI
 
         private void DrawMainControls(Rect area)
         {
+            controlsContentWidth = Mathf.Max(1f, area.width - 28f - 20f);
             GUILayout.BeginArea(area, saoBoxStyle);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("SCANNER PARADO", saoLabelTitleStyle);
+            bool capturing = tcpReceiver != null && tcpReceiver.HasFreshStatus && tcpReceiver.status.isScanning;
+            string captureTitle = capturing ? "CAPTURANDO" :
+                tcpReceiver != null && tcpReceiver.ScanStartPending ? "INICIANDO CAPTURA" : "CAPTURA PARADA";
+            GUILayout.Label(captureTitle, saoLabelTitleStyle);
             if (GUILayout.Button("Recolher", GUILayout.Width(90), GUILayout.Height(30))) controlsCollapsed = true;
             GUILayout.EndHorizontal();
-            DrawQuickControls();
+            // All interactive sections share this scroll, including diagnostic adjustments.
             scrollPosRight = GUILayout.BeginScrollView(scrollPosRight);
+            DrawAcquisitionControls();
+            DrawQuickControls();
+            DrawDisplayControls();
+            DrawConnectionControls();
             DrawPanReference();
             DrawPositionControls();
             DrawDirectionControls();
             DrawImuOrientationControls();
-            DrawAcquisitionControls();
             DrawCloudAndThermalControls();
             GUILayout.Space(8);
             if (GUILayout.Button(showDiagnostics ? "Ocultar diagnóstico e ajustes" : "Diagnóstico e ajustes", GUILayout.Height(34)))
                 showDiagnostics = !showDiagnostics;
+            if (showDiagnostics) DrawDiagnostics();
             if (GUILayout.Button("Voltar ao menu", GUILayout.Height(34)))
             {
                 tcpReceiver?.SendStopScan();
@@ -286,6 +295,54 @@ namespace ArScanner.UI
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private void DrawConnectionControls()
+        {
+            if (tcpReceiver != null && !tcpReceiver.isConnected &&
+                GUILayout.Button("Reconectar scanner", GUILayout.Height(32)))
+                tcpReceiver.ConnectToScanner();
+            if (uwbReceiver != null && uwbReceiver.transportMode != UwbTransportMode.Simulated &&
+                !uwbReceiver.UsbHasRecentData && GUILayout.Button("Autorizar USB novamente", GUILayout.Height(32)))
+                uwbReceiver.RequestUsbPermissionAgain();
+        }
+
+        private void DrawDisplayControls()
+        {
+            if (pointRenderer == null) return;
+            GUILayout.Space(8);
+            GUILayout.Label("VISUALIZAÇÃO", saoLabelTitleStyle);
+            bool lod = GUILayout.Toggle(pointRenderer.enableSurfaceLod, "Unir pontos em superfícies (LOD)");
+            if (lod != pointRenderer.enableSurfaceLod) pointRenderer.SetSurfaceLodEnabled(lod);
+            GUILayout.Label(lod ? "LOD ativo: calcula superfícies em segundo plano."
+                : "Somente pontos: cálculo de superfícies desligado.", saoLabelStyle);
+            GUILayout.Label($"Tamanho dos pontos: ×{pointRenderer.PointSizeMultiplier:0.##} ({pointRenderer.pointSize*1000f:0.##} mm)", saoLabelStyle);
+            for (int row = 0; row < 2; row++)
+            {
+                GUILayout.BeginHorizontal();
+                for (int col = 0; col < 3; col++)
+                {
+                    int i = row*3+col;
+                    bool selected = (!pointRenderer.enableSurfaceLod || !pointRenderer.adaptivePointSizing) &&
+                        Mathf.Approximately(pointRenderer.PointSizeMultiplier, PointSizeMultipliers[i]);
+                    if (GUILayout.Button(PointSizeLabels[i], selected ? saoBtnActiveStyle : saoBtnStyle, GUILayout.Height(32)))
+                        pointRenderer.SetPointSizeMultiplier(PointSizeMultipliers[i]);
+                }
+                GUILayout.EndHorizontal();
+            }
+            bool adaptive = GUILayout.Toggle(pointRenderer.adaptivePointSizing, "Adaptar pontos restantes com LOD");
+            pointRenderer.adaptivePointSizing = adaptive;
+            bool hideBack = GUILayout.Toggle(pointRenderer.hideBackFacingPoints, "Ocultar pontos vistos por trás (experimental)");
+            if (hideBack != pointRenderer.hideBackFacingPoints) pointRenderer.SetHideBackFacingPoints(hideBack);
+            if (hideBack) GUILayout.Label("Considera o lado observado pelo scanner; a direção medida não é a normal real da superfície.", saoLabelStyle);
+            pointRenderer.showScannerAxes = GUILayout.Toggle(pointRenderer.showScannerAxes, "Mostrar indicador do eixo");
+            pointRenderer.useAbsoluteThermalScale = GUILayout.Toggle(pointRenderer.useAbsoluteThermalScale, "Escala fixa de cores por temperatura");
+            if (!pointRenderer.useAbsoluteThermalScale)
+            {
+                GUILayout.Label("Contraste térmico de exibição (não muda as medições)", saoLabelStyle);
+                pointRenderer.thermalDisplayMinC = GUILayout.HorizontalSlider(pointRenderer.thermalDisplayMinC, 0, 35);
+                pointRenderer.thermalDisplayMaxC = GUILayout.HorizontalSlider(pointRenderer.thermalDisplayMaxC, pointRenderer.thermalDisplayMinC+1, 65);
+            }
         }
 
         private void DrawQuickControls()
@@ -313,6 +370,8 @@ namespace ArScanner.UI
             bool aligned = anchorManager != null && anchorManager.PreviewHeadingAligned;
             GUILayout.Space(6);
             GUILayout.Label("GY-25: acompanhamento do giro (teste)", saoLabelStyle);
+            GUILayout.Label("Giro dos pontos: " + DescribePointYawSource(s), saoLabelValueStyle);
+            GUILayout.Label($"Inclinação dos pontos: {(s.imuTiltApplied ? "habilitada" : "desligada")}", saoLabelStyle);
             if (!aligned)
             {
                 GUILayout.Label("Primeiro fixe o eixo e alinhe a direção como de costume.", saoLabelStyle);
@@ -323,19 +382,27 @@ namespace ArScanner.UI
             if (GUILayout.Button("Referenciar GY-25 com scanner parado (3 s)", GUILayout.Height(36)))
                 tcpReceiver.RequestImuOrientationReference();
             GUI.enabled = enabled && tcpReceiver.CanSetPanSpeed &&
-                (s.imuOrientationEnabled || tcpReceiver.HasUsableImuOrientation);
+                (s.imuOrientationEnabled || tcpReceiver.CanEnableImuOrientation);
             bool following = GUILayout.Toggle(s.imuOrientationEnabled, "Acompanhar giro com GY-25");
             if (following != s.imuOrientationEnabled) tcpReceiver.RequestImuOrientationMode(following);
             GUI.enabled = enabled;
             if (s.imuOrientationState == "reference_collecting")
-                GUILayout.Label("Coletando referência; mantenha a cabeça parada.", saoLabelValueStyle);
-            else if (tcpReceiver.HasUsableImuOrientation)
+                GUILayout.Label($"Coletando referência; repouso detectado: {s.imuStationaryMs / 1000f:F1} s. Mantenha a cabeça parada.", saoLabelValueStyle);
+            else if (s.imuOrientationState == "reference_timeout")
+                GUILayout.Label("Não houve repouso suficiente para concluir. Apoie a cabeça e tente referenciar novamente.", saoLabelValueStyle);
+            else if (tcpReceiver.HasValidImuOrientationReference)
+            {
+                if (!s.imuOrientationEnabled)
+                    GUILayout.Label("Referência GY-25 concluída. Ative o acompanhamento com a cabeça parada.", saoLabelValueStyle);
                 GUILayout.Label($"Giro da base desde a referência: {s.imuRelativeBaseYawDeg:F1}°; " +
                     $"inclinação {s.imuPitchDeg:F1}° / {s.imuRollDeg:F1}°.", saoLabelStyle);
+            }
             else GUILayout.Label("Referência GY-25 indisponível: pare e referencie novamente.", saoLabelStyle);
             if (s.imuOrientationEnabled)
-                GUILayout.Label("A captura pausa se a base se mover ou a referência for perdida. A direção inicial continua manual.", saoLabelStyle);
-            GUILayout.Label(tcpReceiver.calibrationStatus, saoLabelStyle);
+                GUILayout.Label("A captura pausa se a referência ou a leitura contínua forem perdidas. A direção inicial continua manual.", saoLabelStyle);
+            if (!tcpReceiver.calibrationStatus.StartsWith("GY-25 coletando referência", System.StringComparison.Ordinal) ||
+                s.imuOrientationState == "reference_collecting")
+                GUILayout.Label(tcpReceiver.calibrationStatus, saoLabelStyle);
         }
 
         private void DrawPanReference()
@@ -488,6 +555,10 @@ namespace ArScanner.UI
             }
             if (!string.IsNullOrEmpty(tcpReceiver.scannerCommandStatus))
                 GUILayout.Label(tcpReceiver.scannerCommandStatus, saoLabelStyle);
+            if (tcpReceiver.HasFreshStatus && tcpReceiver.status.isScanning &&
+                anchorManager != null && !anchorManager.CanAcceptPoints)
+                GUILayout.Label("O scanner está varrendo, mas a nuvem não recebe novos pontos. " +
+                    "Pause a captura e confirme novamente a posição e a direção.", saoLabelValueStyle);
         }
 
         private void DrawCloudAndThermalControls()
@@ -522,10 +593,12 @@ namespace ArScanner.UI
                 else GUILayout.Label("Ao alterar a regra, a nuvem é limpa. Compare o resultado com a opção desligada.", saoLabelStyle);
                 if (pointRenderer.activeThermalPointsCount > 0)
                     GUILayout.Label($"Temperaturas: {pointRenderer.observedMinTemp:F1}–{pointRenderer.observedMaxTemp:F1} °C", saoLabelStyle);
+                if (pointRenderer.showThermalColors)
+                    GUILayout.Label("Sem temperatura: ponto cinza claro.", saoLabelStyle);
             }
             if (tcpReceiver == null) return;
             bool enabled = GUI.enabled;
-            GUI.enabled = enabled && tcpReceiver.isConnected;
+            GUI.enabled = enabled && (thermalPreviewExpanded || tcpReceiver.isConnected);
             if (GUILayout.Button(thermalPreviewExpanded ? "Fechar imagem térmica" : "Ver imagem térmica", GUILayout.Height(36)))
             {
                 thermalPreviewExpanded = !thermalPreviewExpanded;
@@ -533,15 +606,21 @@ namespace ArScanner.UI
             }
             GUI.enabled = enabled;
             if (tcpReceiver.HasFreshStatus)
-                GUILayout.Label(tcpReceiver.HasFreshThermalFrame ? "Câmera térmica: quadro completo recente."
+            {
+                if (tcpReceiver.status.diagnosticVersion >= 14)
+                {
+                    string reduced = tcpReceiver.status.thermalTargetFrameRateHz <
+                        tcpReceiver.status.thermalRequestedFrameRateHz ? "; redução automática ativa" : "";
+                    GUILayout.Label($"Térmica: {tcpReceiver.thermalFramesPerSecond:F1} quadros/s{reduced}.", saoLabelStyle);
+                }
+                GUILayout.Label(tcpReceiver.HasFreshThermalFrame ? "Imagem térmica disponível."
                     : "Câmera térmica: aguardando um quadro completo; detalhes no diagnóstico.", saoLabelStyle);
+            }
         }
 
-        private void DrawDiagnostics(Rect area)
+        private void DrawDiagnostics()
         {
-            GUILayout.BeginArea(area, saoBoxStyle);
             GUILayout.Label("DIAGNÓSTICO E AJUSTES", saoLabelTitleStyle);
-            scrollPosLeft = GUILayout.BeginScrollView(scrollPosLeft);
             GUILayout.Label($"Exibição: {fps:F0} quadros/s", saoLabelStyle);
             if (tcpReceiver != null)
             {
@@ -579,12 +658,10 @@ namespace ArScanner.UI
             }
             if (GUILayout.Button(showSensorDetails ? "Ocultar sensores" : "Sensores e câmeras")) showSensorDetails = !showSensorDetails;
             if (showSensorDetails) DrawSensorDiagnostics();
-            if (GUILayout.Button(showMountingControls ? "Ocultar montagem e exibição" : "Montagem e exibição")) showMountingControls = !showMountingControls;
+            if (GUILayout.Button(showMountingControls ? "Ocultar montagem física" : "Montagem física")) showMountingControls = !showMountingControls;
             if (showMountingControls) DrawMountingControls();
             if (GUILayout.Button(showExperimentControls ? "Ocultar testes de bancada" : "Testes de bancada e experimentos")) showExperimentControls = !showExperimentControls;
             if (showExperimentControls) DrawExperiments();
-            GUILayout.EndScrollView();
-            GUILayout.EndArea();
         }
 
         private void DrawSensorDiagnostics()
@@ -612,11 +689,10 @@ namespace ArScanner.UI
                 GUILayout.Label($"Tag {s.tagReady}; I2C IMU {s.imuI2cAck}, MLX {s.thermalI2cAck}", saoLabelStyle);
                 DrawImuDiagnostics(s);
                 GUILayout.Label(s.rgbMessage ?? "RGB: sem estado.", saoLabelStyle);
-                if (s.rgbReady && GUILayout.Button("Ver RGB do scanner (diagnóstico)")) tcpReceiver.SetCameraPreview(1);
-                if (tcpReceiver.cameraPreviewMode == 1 && tcpReceiver.cameraPreviewTexture != null)
+                if (s.rgbReady && GUILayout.Button("Ver RGB do scanner (diagnóstico)"))
                 {
-                    GUILayout.Label(tcpReceiver.cameraPreviewTexture, GUILayout.Width(275), GUILayout.Height(190));
-                    if (GUILayout.Button("Fechar RGB")) tcpReceiver.SetCameraPreview(0);
+                    thermalPreviewExpanded = false;
+                    tcpReceiver.SetCameraPreview(1);
                 }
                 if (GUILayout.Button(showThermalCalibration ? "Ocultar orientação térmica" : "Calibrar orientação térmica"))
                     showThermalCalibration = !showThermalCalibration;
@@ -639,24 +715,49 @@ namespace ArScanner.UI
                 GUI.enabled = zeroEnabled;
                 GUILayout.Label("Salve o zero só com a cabeça parada e alinhada à frente física escolhida da base. Esse zero persiste no scanner; o yaw no AR é definido separadamente para a sessão.", saoLabelStyle);
             }
+            // A failed image or stale status must never trap the user in preview mode.
+            if (tcpReceiver.cameraPreviewMode == 1)
+            {
+                if (tcpReceiver.cameraPreviewTexture != null)
+                {
+                    float width = Mathf.Min(controlsContentWidth, 275f);
+                    float height = width * tcpReceiver.cameraPreviewTexture.height / tcpReceiver.cameraPreviewTexture.width;
+                    GUILayout.Label(tcpReceiver.cameraPreviewTexture, GUILayout.Width(width), GUILayout.Height(height));
+                }
+                else GUILayout.Label(tcpReceiver.cameraStatus, saoLabelStyle);
+                if (GUILayout.Button("Fechar RGB")) tcpReceiver.SetCameraPreview(0);
+            }
         }
 
         private void DrawImuDiagnostics(PointCloudTcpReceiver.ScannerStatus s)
         {
             GUILayout.Label("GY-25 / MPU6050: " + DescribeImuState(s), saoLabelStyle);
+            string reading = tcpReceiver.HasUsableImuSnapshot ? "atual" :
+                tcpReceiver.HasReadableImuSnapshot ? "atrasada" : "indisponível";
+            GUILayout.Label("Leitura: " + reading + "; giro dos pontos: " + DescribePointYawSource(s), saoLabelStyle);
             if (s.diagnosticVersion >= 11)
             {
                 string identity = s.imuIdentity < 0 ? "não lida" : $"0x{s.imuIdentity:X2}";
                 GUILayout.Label($"Identidade: {identity}; inicializações {s.imuInitAttempts}; falhas de leitura {s.imuReadErrors}", saoLabelStyle);
                 GUILayout.Label($"Bias em repouso: {(s.imuBiasCalibrated ? "concluído" : "não confirmado")}; " +
-                    $"compensação dos pontos: {(s.imuTiltApplied ? "habilitada" : "desligada")}", saoLabelStyle);
+                    $"inclinação dos pontos: {(s.imuTiltApplied ? "habilitada" : "desligada")}", saoLabelStyle);
             }
-            else GUILayout.Label($"Compensação dos pontos: {(s.imuCalibrated ? "habilitada" : "desligada")}; detalhes da inicialização exigem firmware v11.", saoLabelStyle);
+            else GUILayout.Label($"Inclinação dos pontos: {(s.imuCalibrated ? "habilitada" : "desligada")}; detalhes da inicialização exigem firmware v11.", saoLabelStyle);
 
             string age = s.imuAgeMs == uint.MaxValue ? "sem amostra válida" : $"{s.imuAgeMs} ms no scanner";
             GUILayout.Label($"Última consulta há {tcpReceiver.StatusSnapshotAgeSeconds:F1} s; idade da IMU: {age}.", saoLabelStyle);
             if (s.imuSampleIntervalUs > 0)
                 GUILayout.Label($"Último intervalo: {s.imuSampleIntervalUs / 1000f:F1} ms; lacunas de integração: {s.imuIntegrationGaps}.", saoLabelStyle);
+            if (s.imuOrientationInvalidations > 0)
+            {
+                string reason = s.imuOrientationInvalidReason == "invalid_gravity" ? "aceleração fora da faixa" :
+                    s.imuOrientationInvalidReason == "sample_gap" ? "intervalo entre leituras" :
+                    s.imuOrientationInvalidReason == "read_failed" ? "falha de leitura" : "leitura de giro inválida";
+                GUILayout.Label($"Última perda da referência GY-25: {reason}.", saoLabelValueStyle);
+                if (s.imuOrientationInvalidSampleValid)
+                    GUILayout.Label($"Aceleração no evento: {s.imuOrientationInvalidGravityNormG:F2} g; " +
+                        $"intervalo {s.imuOrientationInvalidSampleIntervalUs / 1000f:F1} ms.", saoLabelStyle);
+            }
             if (tcpReceiver.HasReadableImuSnapshot)
             {
                 var raw = s.imuRaw;
@@ -679,6 +780,14 @@ namespace ArScanner.UI
                     $"IMU {(g.imuOnHead ? "na cabeça" : "na base")}. Confira os eixos físicos antes de habilitar compensação.", saoLabelStyle);
             }
             GUILayout.Label("SDA/SCL usa o modo I2C do GY-25. Confira a alimentação principal e o seletor físico; o app não identifica a posição da ponte.", saoLabelStyle);
+        }
+
+        private string DescribePointYawSource(PointCloudTcpReceiver.ScannerStatus s)
+        {
+            if (!tcpReceiver.HasFreshStatus) return "aguardando consulta atual";
+            if (s.diagnosticVersion < 14 || !s.imuOrientationEnabled) return "motor (GY-25 desligada)";
+            if (!tcpReceiver.HasUsableImuOrientation) return "GY-25 sem referência ou leitura válida";
+            return s.isScanning ? "GY-25 aplicada" : "GY-25 pronta; captura parada";
         }
 
         private static string DescribeImuState(PointCloudTcpReceiver.ScannerStatus s)
@@ -754,18 +863,6 @@ namespace ArScanner.UI
                 }
             }
             GUI.enabled = enabled;
-            if (pointRenderer != null)
-            {
-                pointRenderer.enableSurfaceLod = GUILayout.Toggle(pointRenderer.enableSurfaceLod, "Unir pontos no mesmo plano (LOD)");
-                pointRenderer.showScannerAxes = GUILayout.Toggle(pointRenderer.showScannerAxes, "Mostrar indicador do eixo");
-                pointRenderer.useAbsoluteThermalScale = GUILayout.Toggle(pointRenderer.useAbsoluteThermalScale, "Escala fixa de cores por temperatura");
-                if (!pointRenderer.useAbsoluteThermalScale)
-                {
-                    GUILayout.Label("Contraste térmico de exibição (não muda as medições)", saoLabelStyle);
-                    pointRenderer.thermalDisplayMinC = GUILayout.HorizontalSlider(pointRenderer.thermalDisplayMinC, 0, 35);
-                    pointRenderer.thermalDisplayMaxC = GUILayout.HorizontalSlider(pointRenderer.thermalDisplayMaxC, pointRenderer.thermalDisplayMinC+1, 65);
-                }
-            }
         }
 
         private void DrawExperiments()
@@ -827,16 +924,12 @@ namespace ArScanner.UI
         {
             if (!thermalPreviewExpanded || tcpReceiver == null || tcpReceiver.cameraPreviewMode != 2) return;
             GUI.Box(panel, "", saoBoxStyle);
-            GUI.Label(new Rect(panel.x+12, panel.y+8, panel.width-115, 38), "TÉRMICA 24 × 32", saoLabelTitleStyle);
-            if (GUI.Button(new Rect(panel.xMax-100, panel.y+8, 85, 34), "Fechar"))
-            {
-                thermalPreviewExpanded = false; tcpReceiver.SetCameraPreview(0);
-            }
+            GUI.Label(new Rect(panel.x+12, panel.y+8, panel.width-24, 38), "TÉRMICA 24 × 32", saoLabelTitleStyle);
             bool freshImage = tcpReceiver.HasFreshThermalPreview;
-            bool rateControls = tcpReceiver.HasFreshStatus && tcpReceiver.status.diagnosticVersion >= 14;
+            bool partial = tcpReceiver.CameraThermalMaskedPixels > 0;
             if (freshImage)
             {
-                Rect image = new Rect(panel.x+12, panel.y+54, panel.width-24, panel.height-(rateControls ? 190 : 135));
+                Rect image = new Rect(panel.x+12, panel.y+54, panel.width-24, panel.height-(partial ? 160 : 135));
                 GUI.DrawTexture(image, Texture2D.blackTexture);
                 GUI.DrawTexture(image, tcpReceiver.cameraPreviewTexture, ScaleMode.ScaleToFit);
             }
@@ -850,22 +943,12 @@ namespace ArScanner.UI
             }
             if (freshImage)
             {
-                bool partial = tcpReceiver.CameraThermalMaskedPixels > 0;
-                float bottomOffset = rateControls ? 128 : partial ? 76 : 62;
-                GUI.Label(new Rect(panel.x+12, panel.yMax-bottomOffset, panel.width-24, 36),
+                float bottomOffset = partial ? 100 : 62;
+                GUI.Label(new Rect(panel.x+12, panel.yMax-bottomOffset, panel.width-24, partial ? 44 : 36),
                     $"{tcpReceiver.cameraMinTemperature:F1}–{tcpReceiver.cameraMaxTemperature:F1} °C | {tcpReceiver.thermalFramesPerSecond:F1} quadros/s", saoLabelValueStyle);
                 if (partial)
-                    GUI.Label(new Rect(panel.x+12, panel.yMax-(rateControls ? 90 : 48), panel.width-24, 44),
+                    GUI.Label(new Rect(panel.x+12, panel.yMax-52, panel.width-24, 44),
                         tcpReceiver.ThermalPreviewNotice, saoLabelStyle);
-            }
-            if (rateControls)
-            {
-                bool enabled = GUI.enabled;
-                GUI.enabled = enabled && tcpReceiver.CanSetPanSpeed;
-                float width = (panel.width-30)*.5f;
-                if (GUI.Button(new Rect(panel.x+12,panel.yMax-40,width,30), "4 quadros/s")) tcpReceiver.RequestThermalFrameRate(4);
-                if (GUI.Button(new Rect(panel.x+18+width,panel.yMax-40,width,30), "8 quadros/s")) tcpReceiver.RequestThermalFrameRate(8);
-                GUI.enabled = enabled;
             }
         }
     }

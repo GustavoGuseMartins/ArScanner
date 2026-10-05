@@ -10,6 +10,7 @@ public:
     std::vector<uint8_t> tx;
     std::deque<uint8_t> rx;
     std::vector<uint8_t> requestSizes;
+    std::vector<uint16_t> requestAddresses;
     std::vector<uint32_t> probeClocks, eepromStartClocks;
     uint16_t address = 0;
     uint32_t clock = 100000, requestMs = 1, requests = 0;
@@ -23,7 +24,7 @@ public:
     bool failRead = false, failWrite = false, shortRead = false, continuousReady = false;
     void fixture() {
         registers.fill(0); rx.clear(); tx.clear();
-        requestSizes.clear(); eepromWrites = 0; readCalls = 0; negativeReadAt = UINT32_MAX;
+        requestSizes.clear(); requestAddresses.clear(); eepromWrites = 0; readCalls = 0; negativeReadAt = UINT32_MAX;
         probeClocks.clear(); eepromStartClocks.clear();
         unreportedShortRead = differingSmallEepromRead = false;
         failFastEepromRead = failSlowEepromRead = failFastSmallEepromRead = false;
@@ -84,7 +85,7 @@ public:
         const bool eeprom = address >= 0x2400 && address < 0x2740;
         if (address == 0x2400) eepromStartClocks.push_back(clock);
         ++requests; fakeMillis += eeprom && clock == 400000 && fastEepromRequestMs ? fastEepromRequestMs : requestMs;
-        rx.clear(); readCalls = 0; requestSizes.push_back(count);
+        rx.clear(); readCalls = 0; requestSizes.push_back(count); requestAddresses.push_back(address);
         if (failRead) return 0;
         if (eeprom && ((clock == 400000 && (failFastEepromRead || (failFastSmallEepromRead && count == 16))) ||
                       (clock == 100000 && failSlowEepromRead))) return 0;

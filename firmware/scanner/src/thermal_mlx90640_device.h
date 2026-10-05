@@ -8,22 +8,33 @@
 // kept separate; no dependence on Adafruit's private or unbounded frame API.
 class ThermalMlxDevice {
 public:
+    // Called only after a complete Wire transaction has been consumed. The
+    // caller may service another device synchronously on this same task/bus;
+    // it must not recurse into this device or change the bus clock.
+    using CooperativeReadHook = void (*)(void *context);
+    void setCooperativeReadHook(CooperativeReadHook hook, void *context = nullptr) {
+        cooperativeReadHook = hook; cooperativeReadContext = context;
+    }
     int begin(TwoWire &bus, uint8_t refreshCode);
     int setRefreshRate(uint8_t refreshCode);
     int readSubpage(float *result, uint8_t &page, uint32_t &sampleMs);
     void correctBadPixels(float *result);
     int rawError() const { return lastRawError; }
     uint32_t readDurationMs() const { return durationMs; }
+    uint32_t ramReadDurationMs() const { return ramDurationMs; }
     const uint8_t *validityMask() const { return validPixels; }
     uint16_t maskedPixelCount() const { return maskedCount; }
     bool partialCalibration() const { return partial; }
     int calibrationWarning() const { return warning; }
 private:
+    CooperativeReadHook cooperativeReadHook = nullptr;
+    void *cooperativeReadContext = nullptr;
     TwoWire *wire = nullptr;
     ThermalMlxMath::paramsMLX90640 params = {};
     uint16_t raw[834] = {};
     int lastRawError = 0;
     uint32_t durationMs = 0;
+    uint32_t ramDurationMs = 0;
     bool boundedOperation = false;
     uint32_t operationStartedMs = 0;
     bool calibrationDiagnosticLogged = false;

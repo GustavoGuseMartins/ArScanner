@@ -85,6 +85,7 @@ namespace ArScanner.Network
             public int stepsPerRevolution;
             public uint timestampMs;
             public uint poseDrops;
+            public uint queueDrops;
             public bool imuCalibrated;
             public bool encoder;
             public int diagnosticVersion;
@@ -101,7 +102,7 @@ namespace ArScanner.Network
             public int thermalSubpageMask, thermalLastSubpage, thermalRefreshHz, thermalRawError;
             public uint thermalDuplicateSubpages, thermalFrameTimeouts, thermalReadErrors,
                 thermalOverruns, thermalInvalidFrames, thermalI2cHz,
-                thermalReadDurationMs, thermalFrameSpanMs;
+                thermalReadDurationMs, thermalRamReadDurationMs, thermalFrameSpanMs;
             public float thermalFrameRateHz;
             public uint thermalFrameRateWindowMs;
             public int thermalRequestedFrameRateHz, thermalTargetFrameRateHz;
@@ -115,6 +116,11 @@ namespace ArScanner.Network
             public string imuOrientationState;
             public bool imuOrientationReferenceValid, imuOrientationEnabled, imuStationary, imuGravityValid;
             public uint imuOrientationGeneration, imuOrientationAgeMs, imuOrientationGaps, imuStationaryMs;
+            public string imuOrientationInvalidReason;
+            public uint imuOrientationInvalidations, imuOrientationInvalidSampleUs, imuOrientationInvalidSampleIntervalUs;
+            public bool imuOrientationInvalidSampleValid;
+            public float imuOrientationInvalidGravityNormG, imuOrientationInvalidAccelX,
+                imuOrientationInvalidAccelY, imuOrientationInvalidAccelZ;
             public float imuRelativeHeadYawDeg, imuRelativeBaseYawDeg, imuPitchDeg, imuRollDeg, imuYawUncertaintyDeg;
             public float imuBaseQw, imuBaseQx, imuBaseQy, imuBaseQz;
             public ImuRawData imuRaw;
@@ -139,6 +145,9 @@ namespace ArScanner.Network
         {
             public string phoneUtc, httpMessage, commandStatus;
             public float phoneFrameTime;
+            public float phoneFrameDurationSeconds;
+            public long receivedPoints, droppedPoints;
+            public int bufferedPoints;
             public bool statusFresh;
             public ScannerStatus scanner;
         }
@@ -183,6 +192,10 @@ namespace ArScanner.Network
         private UnityWebRequest cameraRequest;
         private Coroutine cameraCoroutine;
         private float nextCameraTime;
+        public float CameraPreviewIntervalSeconds => cameraPreviewMode == 2
+            ? HasFreshStatus && status.diagnosticVersion >= 14 && status.thermalTargetFrameRateHz == 8
+                ? 1f / 8f : 1f / 4f
+            : .2f;
 
         private float nextStatusTime, statusReceivedTime = -100f;
         private Coroutine statusCoroutine;
@@ -194,7 +207,9 @@ namespace ArScanner.Network
         // HTTP polling cadence is suitable for diagnostics, not IMU integration.
         public bool HasUsableImuSnapshot => HasFreshStatus && IsUsableImuSnapshot(status);
         public bool HasReadableImuSnapshot => HasFreshStatus && IsReadableImuSnapshot(status);
+        public bool HasValidImuOrientationReference => HasFreshStatus && IsValidImuOrientationReference(status);
         public bool HasUsableImuOrientation => HasFreshStatus && IsUsableImuOrientation(status);
+        public bool CanEnableImuOrientation => CanSetPanSpeed && HasValidImuOrientationReference && status.imuStationary;
         public bool ImuAllowsScanStart => HasFreshStatus && (status.diagnosticVersion < 14 ||
             (status.imuOrientationState != "reference_collecting" && (!status.imuOrientationEnabled ||
                 (HasUsableImuOrientation && status.imuStationary))));
@@ -202,10 +217,12 @@ namespace ArScanner.Network
             status.panReferenceValid && HasUsableImuSnapshot && status.imuBiasCalibrated &&
             status.imuOrientationState != "reference_collecting";
         public static bool IsUsableImuOrientation(ScannerStatus value)
+            => IsValidImuOrientationReference(value) && value.imuOrientationEnabled && value.imuOrientationState == "ready";
+        public static bool IsValidImuOrientationReference(ScannerStatus value)
         {
             if (value == null || value.diagnosticVersion < 14 || !value.imuReady || !value.imuBiasCalibrated ||
                 !value.imuOrientationReferenceValid || !value.imuGravityValid || value.imuOrientationAgeMs > 100 ||
-                value.imuOrientationState != "ready") return false;
+                (value.imuOrientationState != "ready" && value.imuOrientationState != "referenced")) return false;
             if (!IsFinite(value.imuRelativeHeadYawDeg) || !IsFinite(value.imuRelativeBaseYawDeg) ||
                 !IsFinite(value.imuPitchDeg) || !IsFinite(value.imuRollDeg) || !IsFinite(value.imuYawUncertaintyDeg)) return false;
             float norm = value.imuBaseQw*value.imuBaseQw + value.imuBaseQx*value.imuBaseQx +
@@ -298,7 +315,9 @@ namespace ArScanner.Network
                 cameraRequest == null && statusCoroutine == null &&
                 !DiagnosticsBusy && Time.unscaledTime >= nextCameraTime)
             {
-                nextCameraTime = Time.unscaledTime + .2f;
+                // Count request duration toward the interval. The guards above
+                // keep HTTP requests single-flight when transport is slower.
+                nextCameraTime = Time.unscaledTime + CameraPreviewIntervalSeconds;
                 cameraCoroutine = StartCoroutine(FetchCameraPreview(cameraPreviewMode));
             }
             pointsInBuffer = incomingPoints.Count;
@@ -807,6 +826,10 @@ namespace ArScanner.Network
                 scannerDiagnosticLog.WriteLine(JsonUtility.ToJson(new ScannerDiagnosticRecord {
                     phoneUtc = DateTime.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                     phoneFrameTime = Time.unscaledTime, statusFresh = HasFreshStatus,
+                    phoneFrameDurationSeconds = Time.unscaledDeltaTime,
+                    receivedPoints = Interlocked.Read(ref totalPointsReceived),
+                    droppedPoints = Interlocked.Read(ref droppedPoints),
+                    bufferedPoints = incomingPoints.Count,
                     httpMessage = statusHttpMessage, commandStatus = scannerCommandStatus,
                     scanner = status
                 }));
@@ -831,14 +854,14 @@ namespace ArScanner.Network
 
         public void RequestImuOrientationMode(bool enabled)
         {
-            if (!CanSetPanSpeed || status.diagnosticVersion < 14 || (enabled && !HasUsableImuOrientation)) return;
+            if (!CanSetPanSpeed || status.diagnosticVersion < 14 || (enabled && !CanEnableImuOrientation)) return;
             BeginImuOrientationRequest("imu/orientation/mode?enabled="+(enabled ? "1" : "0"),
                 enabled ? "Habilitando acompanhamento GY-25..." : "Desligando acompanhamento GY-25...");
         }
 
         public void RequestThermalFrameRate(int framesPerSecond)
         {
-            if (!CanSetPanSpeed || status.diagnosticVersion < 14 || (framesPerSecond != 4 && framesPerSecond != 8)) return;
+            if (!CanSetPanSpeed || status.diagnosticVersion < 14 || framesPerSecond != 8) return;
             BeginImuOrientationRequest("thermal/frame-rate?fps="+framesPerSecond,
                 "Ajustando a taxa da câmera térmica...", false);
         }
@@ -882,13 +905,16 @@ namespace ArScanner.Network
                             throw new InvalidDataException("Resposta GY-25 incompleta.");
                         calibrationStatus = response.imuOrientationState == "reference_collecting"
                             ? "GY-25 coletando referência. Mantenha a cabeça parada por 3 segundos."
+                            : response.imuOrientationState == "enabling" ? "Solicitação de acompanhamento GY-25 recebida."
+                            : response.imuOrientationState == "disabling" ? "Solicitação para desligar o acompanhamento GY-25 recebida."
                             : response.imuOrientationEnabled ? "GY-25 acompanhando o giro; direção inicial preservada."
                             : "Acompanhamento GY-25 desligado.";
                     }
                     else
                     {
                         var response = JsonUtility.FromJson<ThermalFrameRateResponse>(diagnosticRequest.downloadHandler.text);
-                        if (response == null || (response.thermalTargetFrameRateHz != 4 && response.thermalTargetFrameRateHz != 8))
+                        if (response == null || response.thermalRequestedFrameRateHz != 8 ||
+                            (response.thermalTargetFrameRateHz != 2 && response.thermalTargetFrameRateHz != 4 && response.thermalTargetFrameRateHz != 8))
                             throw new InvalidDataException("Resposta da taxa térmica incompleta.");
                         calibrationStatus = $"Térmica: solicitado {response.thermalRequestedFrameRateHz} quadros/s; alvo atual {response.thermalTargetFrameRateHz}.";
                     }

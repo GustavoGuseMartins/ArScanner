@@ -15,7 +15,11 @@ namespace {
 constexpr uint8_t Address = 0x33;
 constexpr uint16_t StatusRegister = 0x8000, ControlRegister = 0x800D;
 constexpr uint32_t TransferDeadlineMs = 300;
-constexpr uint16_t WordsPerTransfer = 32;
+// Arduino-ESP32 Wire buffers 128 bytes. Calibration reads keep 32-word
+// transfers; the per-subpage RAM copy uses the full buffer to halve the
+// number of transactions and keep margin at 16 subpages/s (8 fps).
+constexpr uint16_t MaxWordsPerTransfer = 64;
+constexpr uint16_t RamWordsPerTransfer = 64;
 #if THERMAL_EEPROM_DIAGNOSTICS_ENABLED
 void logEepromWords(const uint16_t *words, const char *read, uint32_t clock, int primaryExtractionError, unsigned chunkWords = 32, bool extracted = false) {
     auto summary = ThermalEepromDiagnostics::summarize(words);
@@ -101,7 +105,7 @@ void ThermalMlxDevice::logCalibrationFailure(int extractionError, uint32_t crcBe
 }
 
 int ThermalMlxDevice::readWords(uint16_t address, uint16_t count, uint16_t *data, uint16_t chunkWords) {
-    if (!chunkWords || chunkWords > WordsPerTransfer) return -1;
+    if (!chunkWords || chunkWords > MaxWordsPerTransfer) return -1;
     uint32_t started = boundedOperation ? operationStartedMs : millis();
     while (count) {
         if (uint32_t(millis() - started) > TransferDeadlineMs) return ThermalAcquisition::ReadDeadline;
@@ -127,6 +131,10 @@ int ThermalMlxDevice::readWords(uint16_t address, uint16_t count, uint16_t *data
             data[i] = uint16_t((unsigned(hi) << 8) | unsigned(lo));
         }
         address += words; data += words; count -= words;
+        // RAM may take ~170 ms at the fallback 100 kHz. Service the IMU
+        // between chunks, after consuming this response and before beginning
+        // another transaction, without concurrent Wire access or a second task.
+        if (cooperativeReadHook) cooperativeReadHook(cooperativeReadContext);
     }
     return uint32_t(millis() - started) > TransferDeadlineMs ? ThermalAcquisition::ReadDeadline : 0;
 }
@@ -254,6 +262,7 @@ int ThermalMlxDevice::setRefreshRate(uint8_t refreshCode) {
 
 int ThermalMlxDevice::readSubpage(float *result, uint8_t &page, uint32_t &sampleMs) {
     uint32_t started = millis();
+    ramDurationMs = 0;
     boundedOperation = true;
     operationStartedMs = started;
     auto finish = [this, started](int error) {
@@ -274,7 +283,14 @@ int ThermalMlxDevice::readSubpage(float *result, uint8_t &page, uint32_t &sample
 #if THERMAL_SERIAL_FRAME_DIAGNOSTIC
     if (trace && !lastRawError) lastRawError = readWords(StatusRegister, 1, &cleared);
 #endif
-    if (!lastRawError) lastRawError = readWords(0x0400, 832, raw);
+    if (!lastRawError) {
+        // Measure the deadline-sensitive copy separately from temperature math.
+        // Keep shared-bus MPU service and task preemption inside this elapsed
+        // time: both consume the margin before the next thermal conversion.
+        const uint32_t ramStarted = millis();
+        lastRawError = readWords(0x0400, 832, raw, RamWordsPerTransfer);
+        ramDurationMs = uint32_t(millis() - ramStarted);
+    }
     if (!lastRawError) lastRawError = readWords(StatusRegister, 1, &after);
     // If another subpage arrived while RAM was being copied, discard the torn
     // read. The next scheduled attempt reads the newly ready subpage once.

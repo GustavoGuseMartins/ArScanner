@@ -36,6 +36,7 @@ inline Vec3 project(Vec3 headPoint, float pan, float pitch, float roll,
     Vec3 tag = tagOnHead ? yaw(tagOffset, pan) : tagOffset;
     bodyPoint = subtract(bodyPoint, tag);
     // A rotating IMU's tilt is expressed in head axes, not fixed base axes.
+    // Pitch/roll application is independent of which source supplies pan yaw.
     return imuOnHead ? yaw(tilt(yaw(bodyPoint, -pan), pitch, roll), pan)
                      : tilt(bodyPoint, pitch, roll);
 }
@@ -60,6 +61,18 @@ inline bool thermalAngles(Vec3 headPoint, Vec3 lidarOrigin, Vec3 thermalOffset,
     horizontalDeg = horizontal/radians;
     verticalDeg = vertical/radians;
     return isfinite(horizontalDeg) && isfinite(verticalDeg);
+}
+// Both sensors orbit the same pan axis. Re-express the physical LiDAR hit
+// (including its eccentric optical origin) in the head pose of the image.
+// Rotating only the ray or subtracting the current lens first loses parallax.
+inline bool thermalAnglesAtFramePose(Vec3 headPoint, float lidarPanDeg,
+                                     float framePanDeg, Vec3 lidarOrigin,
+                                     Vec3 thermalOffset, bool invertLidarY,
+                                     float &horizontalDeg, float &verticalDeg,
+                                     uint8_t orientationProfile = 0) {
+    if (!isfinite(lidarPanDeg) || !isfinite(framePanDeg)) return false;
+    return thermalAngles(yaw(headPoint, lidarPanDeg-framePanDeg), lidarOrigin,
+        thermalOffset, invertLidarY, horizontalDeg, verticalDeg, orientationProfile);
 }
 // The native 32 x 24 image must be rotated 90 degrees clockwise for display:
 // native column grows toward head-down and native row toward head-left.

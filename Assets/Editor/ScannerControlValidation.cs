@@ -17,10 +17,11 @@ namespace ArScanner.EditorTools
             ValidateReferenceAndCommandAcknowledgements();
             ValidateUnknownHeadingIndicator();
             ValidateThermalStatus();
+            ValidateThermalPreviewCadence();
             ValidateImuStatus();
             ValidateHudLayout();
             ValidateImuOrientationAndFrameRate();
-            Debug.Log("[ScannerControlValidation] PASS: pan reference, delayed/stale command acknowledgements, timeout, neutral heading indicator, IMU v11/legacy parsing and invalid-sample gate.");
+            Debug.Log("[ScannerControlValidation] PASS: pan reference, delayed/stale command acknowledgements, timeout, neutral heading indicator, IMU v11/legacy parsing, invalid-sample gate and negotiated thermal preview cadence.");
         }
 
         private static void ValidateHudLayout()
@@ -43,6 +44,10 @@ namespace ArScanner.EditorTools
                         "The HUD must preserve a central viewing area and keep preview/controls inside the safe display.");
                     Require(Mathf.Abs(layout.safe.y*layout.scale-(screen.y-safe.yMax)) < .01f,
                         "Bottom-left safe-area coordinates must convert to IMGUI top-left coordinates.");
+                    Require(!layout.controls.Overlaps(layout.connections) && !layout.controls.Overlaps(layout.preview),
+                        "The right menu must not cover the left status or central preview.");
+                    if (!collapsed) Require(Mathf.Abs(layout.controls.height-(layout.safe.height-32f)) < .01f,
+                        "Expanded right controls must use the full safe height for the shared scroll.");
                 }
         }
 
@@ -79,10 +84,25 @@ namespace ArScanner.EditorTools
                     "An enabled GY-25 with an invalid reference must block starting acquisition.");
                 receiver.status.imuOrientationEnabled = false;
                 Require(receiver.ImuAllowsScanStart, "Opt-out must preserve existing manual acquisition with no IMU reference.");
+                receiver.status.imuOrientationReferenceValid = true;
+                receiver.status.imuOrientationState = "referenced";
+                Require(receiver.HasValidImuOrientationReference && receiver.CanEnableImuOrientation &&
+                    !receiver.HasUsableImuOrientation && receiver.ImuAllowsScanStart,
+                    "A completed reference must allow enabling GY-25 while tracking is still off; referenced cannot require ready.");
+                receiver.status.imuStationary = false;
+                Require(receiver.HasValidImuOrientationReference && !receiver.CanEnableImuOrientation,
+                    "A retained reference does not permit enabling GY-25 while the head is moving.");
+                receiver.status.imuStationary = true;
                 receiver.status.imuOrientationState = "reference_collecting";
-                Require(!receiver.ImuAllowsScanStart, "Acquisition cannot interrupt the explicit stationary reference collection.");
+                Require(!receiver.ImuAllowsScanStart && !receiver.HasValidImuOrientationReference,
+                    "Acquisition cannot interrupt the explicit stationary reference collection.");
+                receiver.status.imuOrientationState = "reference_timeout";
+                receiver.status.imuOrientationReferenceValid = false;
+                Require(!receiver.CanEnableImuOrientation && !receiver.HasValidImuOrientationReference,
+                    "A timed out reference must remain unavailable rather than masquerading as completed.");
                 receiver.status.imuOrientationState = "ready";
                 receiver.status.imuOrientationReferenceValid = true;
+                receiver.status.imuOrientationEnabled = true;
                 receiver.status.imuBaseQw = 0;
                 Require(!receiver.HasUsableImuOrientation, "Missing/default quaternion values are not a valid orientation.");
                 receiver.status.imuBaseQw = 1;
@@ -99,7 +119,8 @@ namespace ArScanner.EditorTools
                 Require(!receiver.CanSetPanSpeed, "Motor speed cannot change during acquisition.");
                 receiver.status.isScanning = false;
                 SetField(receiver,"statusReceivedTime",Time.unscaledTime-3f);
-                Require(!receiver.CanSetPanSpeed && !receiver.HasUsableImuOrientation,
+                Require(!receiver.CanSetPanSpeed && !receiver.HasUsableImuOrientation &&
+                    !receiver.HasValidImuOrientationReference && !receiver.CanEnableImuOrientation,
                     "Stale HTTP snapshots cannot enable speed commands or orientation assistance.");
                 SetField(receiver,"statusReceivedTime",Time.unscaledTime);
                 receiver.status.diagnosticVersion = 12;
@@ -177,6 +198,41 @@ namespace ArScanner.EditorTools
                 SetField(receiver, "statusReceivedTime", Time.unscaledTime);
                 receiver.isConnected = false;
                 Require(!receiver.HasUsableImuSnapshot && !receiver.HasReadableImuSnapshot, "A disconnected scanner cannot claim a usable IMU snapshot.");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(go); }
+        }
+
+        private static void ValidateThermalPreviewCadence()
+        {
+            var go = new GameObject("ThermalPreviewCadenceValidation");
+            go.SetActive(false);
+            try
+            {
+                var receiver = go.AddComponent<PointCloudTcpReceiver>();
+                receiver.autoConnect = false;
+                receiver.isConnected = true;
+                receiver.cameraPreviewMode = 2;
+                SetField(receiver, "statusReceivedTime", Time.unscaledTime);
+                receiver.status = JsonUtility.FromJson<PointCloudTcpReceiver.ScannerStatus>(
+                    "{\"diagnosticVersion\":14,\"thermalRequestedFrameRateHz\":8,\"thermalTargetFrameRateHz\":4}");
+                Require(Mathf.Approximately(receiver.CameraPreviewIntervalSeconds, .25f),
+                    "A scanner fallback to four complete frames must override an eight-frame request in the preview cadence.");
+                receiver.status.thermalTargetFrameRateHz = 8;
+                Require(Mathf.Approximately(receiver.CameraPreviewIntervalSeconds, .125f),
+                    "A negotiated eight-frame acquisition must not retain the five-image preview limit.");
+                SetField(receiver, "statusReceivedTime", Time.unscaledTime - 3f);
+                Require(Mathf.Approximately(receiver.CameraPreviewIntervalSeconds, .25f),
+                    "A stale scanner target must fall back to four preview requests per second.");
+                SetField(receiver, "statusReceivedTime", Time.unscaledTime);
+                receiver.status.diagnosticVersion = 12;
+                Require(Mathf.Approximately(receiver.CameraPreviewIntervalSeconds, .25f),
+                    "Legacy firmware without the negotiated frame-rate contract must retain a four-frame cadence.");
+                receiver.status = null;
+                Require(Mathf.Approximately(receiver.CameraPreviewIntervalSeconds, .25f),
+                    "Preview startup without a scanner snapshot must use the four-frame fallback.");
+                receiver.cameraPreviewMode = 1;
+                Require(Mathf.Approximately(receiver.CameraPreviewIntervalSeconds, .2f),
+                    "Thermal acquisition changes must preserve the RGB preview cadence.");
             }
             finally { UnityEngine.Object.DestroyImmediate(go); }
         }
@@ -364,6 +420,12 @@ namespace ArScanner.EditorTools
                 SetField(renderer, "spatial", spatial);
                 SetField(renderer, "receiver", receiver);
                 SetField(renderer, "axesRoot", axesRoot);
+                var initialStatus = receiver.status;
+                receiver.status = null;
+                Invoke(renderer, "UpdateScannerAxes");
+                Require(!axesRoot.gameObject.activeSelf,
+                    "Startup before the first scanner status must not crash or display an unplaced scanner indicator.");
+                receiver.status = initialStatus;
                 Invoke(renderer, "UpdateScannerAxes");
                 Require(!axesRoot.gameObject.activeSelf,
                     "An arbitrary scene origin must not display a scanner indicator.");

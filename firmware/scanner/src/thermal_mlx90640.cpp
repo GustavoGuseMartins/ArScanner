@@ -15,12 +15,10 @@ void ThermalSensor::loadOrientationProfile() {
     int saved = prefs.isKey("thermal_dir")
         ? prefs.getInt("thermal_dir", THERMAL_ORIENTATION_PROFILE_DEFAULT)
         : THERMAL_ORIENTATION_PROFILE_DEFAULT;
-    int savedFps = prefs.getInt("thermal_fps", 4);
     prefs.end();
     if (saved >= 0 && saved <= 3)
         orientationProfile = (uint8_t)saved;
-    requestedFullFps = savedFps == 8 ? 8 : 4;
-    refreshHz = uint8_t(requestedFullFps * 2);
+    // Frame rate is fixed at 8 fps; a legacy thermal_fps preference has no effect.
     Serial.printf("[TERMICA] Perfil de orientacao: %u (-X/+X, espelho horizontal).\n",
                   (unsigned)orientationProfile);
 }
@@ -131,6 +129,7 @@ void ThermalSensor::setError(const char *state, int error, int rawError) {
 }
 
 bool ThermalSensor::reduceRate(bool busError) {
+    if (!busError) return true; // Alvo fixo de 8 quadros completos/s: nunca rebaixa taxa por overruns de RAM.
     if (refreshHz <= 4 && (!busError || i2cHz == I2C_FREQ)) return true;
     refreshHz = busError ? 4 : refreshHz >= 16 ? 8 : 4;
     // A RAM overrun means transfer timing, not proof of an electrical fault.
@@ -170,7 +169,8 @@ void ThermalSensor::resetRateWindow() {
 }
 
 bool ThermalSensor::requestFrameRate(uint8_t fullFps) {
-    if (fullFps != 4 && fullFps != 8) return false;
+    if (fullFps != THERMAL_DEFAULT_FULL_FPS) return false;
+    discardPartial();
     if (fullFps == requestedFullFps && refreshHz == fullFps * 2 &&
         i2cHz == I2C_FAST_FREQ && isInitialized()) return true;
     requestedFullFps = fullFps;
@@ -196,11 +196,6 @@ bool ThermalSensor::requestFrameRate(uint8_t fullFps) {
     }
     failedReads = overrunStreak = 0;
     lastSubpageMs = lastTimeoutMs = lastCompleteMs = millis();
-    Preferences prefs;
-    if (prefs.begin("arscanner", false)) {
-        prefs.putInt("thermal_fps", fullFps);
-        prefs.end();
-    }
     Serial.printf("[TERMICA] Solicitados %u quadros completos/s (%u subpaginas/s).\n",
         (unsigned)fullFps, (unsigned)refreshHz);
     return true;
@@ -251,6 +246,7 @@ bool ThermalSensor::updateFrame() {
     }
     portENTER_CRITICAL(&frameMux);
     diagnostic.readDurationMs = mlx.readDurationMs();
+    diagnostic.ramReadDurationMs = mlx.ramReadDurationMs();
     diagnostic.rawError = mlx.rawError();
     portEXIT_CRITICAL(&frameMux);
     if (error) {
@@ -271,7 +267,8 @@ bool ThermalSensor::updateFrame() {
                 portEXIT_CRITICAL(&frameMux);
             }
         } else if (error == -8) {
-            if (++overrunStreak >= 3 && refreshHz > 4) reduceRate(false);
+            // Mantem fixo em 8 FPS (16 subpaginas/s); descarta a leitura incompleta e continua
+            ++overrunStreak;
         } else if (++failedReads >= 5) {
             portENTER_CRITICAL(&frameMux);
             initialized = false;
@@ -359,6 +356,38 @@ float ThermalSensor::getPointTemperature(float angleHorizDeg, float angleVertDeg
 
 bool ThermalSensor::tryGetPointTemperature(float angleHorizDeg, float angleVertDeg,
                                             float &temperatureC, uint32_t sampleTimeMs) {
+    return tryGetPointTemperatureForFrame(angleHorizDeg, angleVertDeg, temperatureC,
+        sampleTimeMs, orientationProfile, false, 0);
+}
+
+bool ThermalSensor::tryGetHeadPointTemperature(ScanGeometry::Vec3 headPoint,
+        ScanGeometry::Vec3 lidarOrigin, ScanGeometry::Vec3 thermalOffset,
+        bool invertLidarY, float &temperatureC, uint32_t sampleTimeMs,
+        PanAtTimestamp panAtTimestamp, void *poseContext) {
+    if (!panAtTimestamp || sampleTimeMs == UINT32_MAX) return false;
+    // Snapshot the exact published image. Looking up pan can take another
+    // mutex, so do it outside frameMux and reject a publication race below.
+    portENTER_CRITICAL(&frameMux);
+    uint32_t timestamp = frameTimestampMs, count = frameCount;
+    uint8_t profile = orientationProfile;
+    int32_t skewMs = (int32_t)(sampleTimeMs-timestamp);
+    bool available = frameValid && uint32_t(millis()-timestamp) <= MAX_FRAME_AGE_MS &&
+        skewMs >= -200 && skewMs <= 200;
+    portEXIT_CRITICAL(&frameMux);
+    if (!available) return false;
+    float lidarPan, framePan;
+    if (!panAtTimestamp(poseContext, sampleTimeMs, lidarPan) ||
+        !panAtTimestamp(poseContext, timestamp, framePan)) return false;
+    float horizontal, vertical;
+    if (!ScanGeometry::thermalAnglesAtFramePose(headPoint, lidarPan, framePan,
+            lidarOrigin, thermalOffset, invertLidarY, horizontal, vertical, profile)) return false;
+    return tryGetPointTemperatureForFrame(horizontal, vertical, temperatureC,
+        sampleTimeMs, profile, true, count);
+}
+
+bool ThermalSensor::tryGetPointTemperatureForFrame(float angleHorizDeg, float angleVertDeg,
+        float &temperatureC, uint32_t sampleTimeMs, uint8_t projectionProfile,
+        bool requireFrameMatch, uint32_t projectionFrameCount) {
     if (!isfinite(angleHorizDeg) || !isfinite(angleVertDeg)) return false;
     // A correcao de 90 graus a direita troca o FOV nativo de 110 x 75
     // para 75 horizontal x 110 vertical na cabeca. A amostragem segue
@@ -366,13 +395,15 @@ bool ThermalSensor::tryGetPointTemperature(float angleHorizDeg, float angleVertD
     float col, row;
     if (!ScanGeometry::thermalRawPixelForRightCorrection90(angleHorizDeg, angleVertDeg,
             THERMAL_SENSOR_FOV_X_DEG, THERMAL_SENSOR_FOV_Y_DEG, col, row,
-            orientationProfile)) return false;
+            projectionProfile)) return false;
     if (!isfinite(col) || !isfinite(row)) return false;
     int x0 = constrain((int)floorf(col), 0, 31), y0 = constrain((int)floorf(row), 0, 23);
     int x1 = min(x0+1, 31), y1 = min(y0+1, 23);
     float tx = col-x0, ty = row-y0;
     portENTER_CRITICAL(&frameMux);
-    bool available = frameValid && (uint32_t)(millis() - frameTimestampMs) <= MAX_FRAME_AGE_MS;
+    bool available = frameValid && (uint32_t)(millis() - frameTimestampMs) <= MAX_FRAME_AGE_MS &&
+        projectionProfile == orientationProfile &&
+        (!requireFrameMatch || frameCount == projectionFrameCount);
     if (available && sampleTimeMs != UINT32_MAX) {
         int32_t skewMs = (int32_t)(sampleTimeMs-frameTimestampMs);
         available = skewMs >= -200 && skewMs <= 200;

@@ -65,7 +65,7 @@ namespace ArScanner.EditorTools
             main.playOnAwake = false;
             main.maxParticles = 80000;
             main.simulationSpace = ParticleSystemSimulationSpace.Local;
-            main.startSize = 0.00625f;
+            main.startSize = ThermalPointCloudRenderer.DefaultPointSize;
             main.startLifetime = float.MaxValue;
 
             var emission = ps.emission;

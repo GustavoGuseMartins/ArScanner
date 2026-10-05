@@ -25,7 +25,8 @@ inline int formatScanTrace(char *line, size_t size, const ScanTraceSample &s) {
         (unsigned)s.signalStrength,s.strengthWarning ? 1 : 0);
 }
 
-// External lock required. Raw accepted measurements, before any 3D/AR transform.
+// External lock required. Accepted raw measurements plus the firmware's 3D
+// projection; coordinates precede Unity/AR transforms and use the pan-axis frame.
 template<size_t Capacity> class ScanTrace {
     ScanTraceSample samples[Capacity] = {};
     size_t next = 0, count = 0;

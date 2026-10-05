@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include <Wire.h>
+#include <string.h>
 
 struct ImuRawData {
     float accelX, accelY, accelZ;   // g
@@ -30,6 +31,17 @@ struct ImuOrientationSnapshot {
     float relativeHeadYawDeg = 0, relativeBaseYawDeg = 0;
     float pitchDeg = 0, rollDeg = 0, yawUncertaintyDeg = 0;
     float qw = 1, qx = 0, qy = 0, qz = 0;
+    // Last reference invalidation persists across explicit references/mode
+    // changes and initialization retries. Reset only on a new driver instance
+    // (a scanner reboot), so a read failure survives the automatic recovery.
+    const char *invalidReason = "none";
+    uint32_t invalidations = 0, invalidSampleUs = 0, invalidSampleIntervalUs = 0;
+    bool invalidSampleValid = false;
+    float invalidGravityNormG = 0, invalidAccelX = 0, invalidAccelY = 0, invalidAccelZ = 0;
+    bool canApplyYaw(uint32_t maximumAgeMs = 150) const {
+        return enabled && referenceValid && gaps == 0 && ageMs <= maximumAgeMs &&
+            state && strcmp(state, "ready") == 0;
+    }
 };
 
 class ImuSensor {
@@ -45,8 +57,9 @@ private:
     bool orientationReferenceValid = false;
     bool orientationCollecting = false;
     bool orientationGravityValid = false;
-    bool orientationStationary = false;
-    uint32_t orientationReferenceStartedMs = 0, orientationReferenceGoodMs = 0;
+    bool orientationStationary = false, orientationSampleSeen = false;
+    bool orientationReferenceTimedOut = false;
+    uint32_t orientationReferenceStartedMs = 0, orientationReferenceGoodUs = 0;
     uint32_t orientationLastUpdateUs = 0, orientationGeneration = 0;
     uint32_t orientationGaps = 0;
     float orientationReferencePanDeg = 0, orientationReferenceYawDeg = 0;
@@ -57,6 +70,22 @@ private:
     float orientationYawUncertaintyDeg = 0;
     float orientationGravity[3] = {0, 1, 0};
     float orientationReferenceGravity[3] = {0, 1, 0};
+    // Orientation-only warm-up residual, in the bias-corrected sensor frame.
+    // Keep the startup driver bias and raw diagnostic readings unchanged.
+    float orientationGyroResidualDps[3] = {};
+    float orientationPreviousGyroDps[3] = {};
+    double orientationReferenceGyroIntegral[3] = {};
+    void resetOrientationReferenceWindow();
+    void invalidateOrientationReference(const char *reason, const ImuRawData *sample,
+        uint32_t sampleUs, uint32_t intervalUs);
+    const char *orientationInvalidReason = "none";
+    uint32_t orientationInvalidations = 0, orientationInvalidSampleUs = 0;
+    uint32_t orientationInvalidSampleIntervalUs = 0;
+    bool orientationInvalidSampleValid = false;
+    float orientationInvalidGravityNormG = 0;
+    float orientationInvalidAccel[3] = {};
+    float filteredTiltPitch = 0.0f;
+    float filteredTiltRoll = 0.0f;
 
 public:
     ImuSensor();
@@ -64,8 +93,11 @@ public:
     bool update(); // true only after a complete I2C transaction
     float getPitch();
     float getRoll();
+    float getFilteredTiltPitch();
+    float getFilteredTiltRoll();
     float getYaw();
     ImuRawData getRawAxes();
+    uint32_t getSampleTimestampUs() const { return lastUpdateUs; }
     void updateOrientation(float panDegrees);
     bool requestOrientationReference(float panDegrees);
     bool setOrientationEnabled(bool enabled);

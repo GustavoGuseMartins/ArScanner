@@ -10,6 +10,7 @@
 #include "control_command_parser.h"
 #include "scan_geometry.h"
 #include "scan_trace.h"
+#include "head_yaw_history.h"
 
 #ifndef THERMAL_SERIAL_FRAME_DIAGNOSTIC
 #define THERMAL_SERIAL_FRAME_DIAGNOSTIC 0
@@ -48,6 +49,7 @@ uint32_t latestAttitudeUs = 0;
 ImuRawData latestImuRaw = {};
 ImuHealth statusImuHealth;
 ImuOrientationSnapshot statusImuOrientation;
+HeadYawHistory<64> headYawHistory;
 UwbTagDiagnostics statusTag;
 LidarDiagnostics statusLidarDiagnostics;
 volatile uint32_t poseDropCount = 0;
@@ -69,12 +71,100 @@ volatile uint8_t thermalFrameRateRequest = 0;
 static ScanTrace<1024> scanTrace;
 portMUX_TYPE traceMux = portMUX_INITIALIZER_UNLOCKED;
 
+static float finiteDiagnosticValue(float value) {
+    return isfinite(value) ? value : 0.0f;
+}
+
+static bool finiteInvalidationSample(const ImuOrientationSnapshot &orientation) {
+    return orientation.invalidSampleValid && isfinite(orientation.invalidGravityNormG) &&
+        isfinite(orientation.invalidAccelX) && isfinite(orientation.invalidAccelY) &&
+        isfinite(orientation.invalidAccelZ);
+}
+
+// Thermal EEPROM/RAM copies yield here between drained Wire transactions.
+// This function stays on the sole acquisition task and never changes Wire's
+// clock or enters the thermal driver. Limit MPU traffic to at most 100 Hz.
+static void serviceImuOnSharedBus(void *) {
+    static uint32_t lastImuAttemptUs = 0;
+    const uint32_t nowUs = micros();
+    if (uint32_t(nowUs-lastImuAttemptUs) < 10000U) return;
+    lastImuAttemptUs = nowUs;
+    const bool imuSampleUpdated = imu.isInitialized() && imu.update();
+    float pitch = 0, roll = 0;
+    ImuRawData raw = {};
+    if (imuSampleUpdated) {
+        pitch = imu.getFilteredTiltPitch();
+        roll = imu.getFilteredTiltRoll();
+        raw = imu.getRawAxes();
+    }
+    // The Aux task is the sole owner of the shared I2C bus. HTTP only sets
+    // these requests; applying them here prevents a concurrent Wire call.
+    bool referenceRequest = false;
+    int8_t orientationMode = -1;
+    float orientationPan = 0;
+    portENTER_CRITICAL(&attitudeMux);
+    referenceRequest = imuOrientationReferenceRequest;
+    imuOrientationReferenceRequest = false;
+    orientationMode = imuOrientationModeRequest;
+    imuOrientationModeRequest = -1;
+    orientationPan = statusPanDeg;
+    portEXIT_CRITICAL(&attitudeMux);
+    if (referenceRequest) imu.requestOrientationReference(orientationPan);
+    if (orientationMode >= 0) imu.setOrientationEnabled(orientationMode != 0);
+    if (imuSampleUpdated) imu.updateOrientation(orientationPan);
+    // Publish sample and health atomically; HTTP never reads the mutable
+    // I2C driver from the other core.
+    ImuHealth imuHealth = imu.getHealth();
+    portENTER_CRITICAL(&attitudeMux);
+    if (imuSampleUpdated) {
+        latestImuRaw = raw;
+        latestPitch = pitch;
+        latestRoll = roll;
+        latestAttitudeUs = imu.getSampleTimestampUs();
+    }
+    statusImuHealth = imuHealth;
+    ImuOrientationSnapshot nextOrientation = imu.getOrientation();
+    if (nextOrientation.generation != statusImuOrientation.generation ||
+        nextOrientation.enabled != statusImuOrientation.enabled ||
+        !nextOrientation.canApplyYaw()) headYawHistory.clear();
+    if (imuSampleUpdated && nextOrientation.canApplyYaw())
+        headYawHistory.push(latestAttitudeUs, nextOrientation.relativeHeadYawDeg);
+    statusImuOrientation = nextOrientation;
+    portEXIT_CRITICAL(&attitudeMux);
+}
+
+struct ThermalYawContext {
+    bool imuEnabled;
+    uint32_t imuGeneration;
+    uint32_t nowMs, nowUs;
+};
+
+// Both lookups in a thermal association use the same yaw source/reference.
+// A missing GY-25 history must never silently fall back to the motor angle.
+static bool thermalYawAtTimestamp(void *opaque, uint32_t timestampMs, float &yaw) {
+    const auto &context = *static_cast<ThermalYawContext *>(opaque);
+    const int32_t ageMs = int32_t(context.nowMs - timestampMs);
+    if (ageMs < 0 || ageMs > 1000) return false;
+    const uint32_t timestampUs = context.nowUs - uint32_t(ageMs) * 1000U;
+    portENTER_CRITICAL(&attitudeMux);
+    const ImuOrientationSnapshot current = statusImuOrientation;
+    bool valid = current.enabled == context.imuEnabled &&
+        current.generation == context.imuGeneration;
+    if (context.imuEnabled) {
+        valid = valid && current.canApplyYaw() && latestAttitudeUs &&
+            uint32_t(micros() - latestAttitudeUs) <= 150000U &&
+            headYawHistory.at(timestampUs, yaw);
+    }
+    portEXIT_CRITICAL(&attitudeMux);
+    if (!valid) return false;
+    return context.imuEnabled || stepper.getAngleAt(timestampUs, yaw);
+}
+
 // I2C e captura de imagens podem bloquear por um quadro inteiro. Nunca devem
 // executar na tarefa responsável pela UART e pelos pulsos do motor.
 void TaskAuxSensorsCore1(void *pvParameters) {
     unsigned long lastThermalReadMs = 0;
     unsigned long lastI2cRetryMs = 0;
-    unsigned long lastThermalLogMs = 0;
 
     for (;;) {
         // Retry device initialization after an absent ACK or acquisition fault.
@@ -89,120 +179,110 @@ void TaskAuxSensorsCore1(void *pvParameters) {
             statusThermalAck = thermalAck;
             bool parking = statusParking;
             portEXIT_CRITICAL(&attitudeMux);
-            if (thermalAck && !thermal.isInitialized()) {
-                if (thermal.begin()) {
-                    Serial.println("[TERMICA] MLX90640 conectado e pronto!");
-                }
-            }
             if (imuAck && !imu.isInitialized() && !isScanningActive && !parking) {
                 if (imu.begin()) {
                     Serial.println("[IMU] MPU6050 conectado e pronto!");
                 }
             }
+            if (thermalAck && !thermal.isInitialized() && (!imuAck || imu.isInitialized())) {
+                if (thermal.begin()) {
+                    Serial.println("[TERMICA] MLX90640 conectado e pronto!");
+                }
+            }
         }
 
-        const bool imuSampleUpdated = imu.isInitialized() && imu.update();
-        float pitch = 0, roll = 0;
-        ImuRawData raw = {};
-        if (imuSampleUpdated) {
-            pitch = imu.getPitch();
-            roll = imu.getRoll();
-            raw = imu.getRawAxes();
-        }
-        // The Aux task is the sole owner of the shared I2C bus. HTTP only sets
-        // these requests; applying them here prevents a concurrent Wire call.
-        bool referenceRequest = false;
-        int8_t orientationMode = -1;
+        serviceImuOnSharedBus(nullptr);
         uint8_t frameRateRequest = 0;
-        float orientationPan = 0;
         portENTER_CRITICAL(&attitudeMux);
-        referenceRequest = imuOrientationReferenceRequest;
-        imuOrientationReferenceRequest = false;
-        orientationMode = imuOrientationModeRequest;
-        imuOrientationModeRequest = -1;
         frameRateRequest = thermalFrameRateRequest;
         thermalFrameRateRequest = 0;
-        orientationPan = statusPanDeg;
         portEXIT_CRITICAL(&attitudeMux);
-        if (referenceRequest) imu.requestOrientationReference(orientationPan);
-        if (orientationMode >= 0) imu.setOrientationEnabled(orientationMode != 0);
         if (frameRateRequest) thermal.requestFrameRate(frameRateRequest);
-        if (imuSampleUpdated) imu.updateOrientation(orientationPan);
-        // Publish sample and health atomically; HTTP never reads the mutable
-        // I2C driver from the other core.
-        ImuHealth imuHealth = imu.getHealth();
-        portENTER_CRITICAL(&attitudeMux);
-        if (imuSampleUpdated) {
-            latestImuRaw = raw;
-            latestPitch = pitch;
-            latestRoll = roll;
-            latestAttitudeUs = micros();
-        }
-        statusImuHealth = imuHealth;
-        statusImuOrientation = imu.getOrientation();
-        portEXIT_CRITICAL(&attitudeMux);
-
         // Prévia também disponível em standby, sem ligar os motores.
         if (thermal.isInitialized() && (millis() - lastThermalReadMs >= 10)) {
-            thermal.updateFrame();
+            // Space attempt starts; a long RAM read/calculation already spans
+            // this interval. The task still yields below between attempts.
             lastThermalReadMs = millis();
-        }
-        if (millis() - lastThermalLogMs >= 5000) {
-            lastThermalLogMs = millis();
-            portENTER_CRITICAL(&attitudeMux);
-            uint32_t imuAgeMs = latestAttitudeUs ? uint32_t(micros()-latestAttitudeUs)/1000U : UINT32_MAX;
-            portEXIT_CRITICAL(&attitudeMux);
-            Serial.printf("[IMU] v14 estado=%s pronta=%d identidade=%d bias=%d tilt=%d tentativas=%lu erros_leitura=%lu idade_ms=%lu\n",
-                imuHealth.state,imuHealth.ready,(int)imuHealth.identity,imuHealth.biasCalibrated,
-                IMU_APPLY_TILT,(unsigned long)imuHealth.initAttempts,
-                (unsigned long)imuHealth.readErrors,(unsigned long)imuAgeMs);
-            if (imuSampleUpdated) {
-                Serial.printf("[IMU] sensor_XYZ accel_g=%.3f/%.3f/%.3f gyro_dps=%.2f/%.2f/%.2f angles_deg=%.2f/%.2f/%.2f intervalo_us=%lu lacunas=%lu\n",
-                    raw.accelX,raw.accelY,raw.accelZ,raw.gyroX,raw.gyroY,raw.gyroZ,
-                    raw.angleX,raw.angleY,raw.angleZ,(unsigned long)raw.sampleIntervalUs,
-                    (unsigned long)raw.integrationGaps);
-            }
-            int error; uint32_t frames, age;
-            thermal.health(error, frames, age);
-            auto acquisition = thermal.acquisitionHealth();
-            Serial.printf("[TERMICA] v14 estado=%s frame=%d quadros=%lu idade_ms=%lu mask=%u dup=%lu timeout=%lu i2c_erros=%lu overruns=%lu erro=%d raw=%d leitura_ms=%lu span_ms=%lu parcial=%d pixels_excluidos=%u aviso_calibracao=%d fps=%.2f alvo=%u\n",
-                acquisition.state, acquisition.frameReady, (unsigned long)frames, (unsigned long)age,
-                (unsigned)acquisition.subpageMask, (unsigned long)acquisition.duplicateSubpages,
-                (unsigned long)acquisition.frameTimeouts, (unsigned long)acquisition.readErrors,
-                (unsigned long)acquisition.overruns, error, acquisition.rawError,
-                (unsigned long)acquisition.readDurationMs, (unsigned long)acquisition.frameSpanMs,
-                acquisition.partialCalibration, (unsigned)acquisition.maskedPixels,
-                acquisition.calibrationWarning, acquisition.measuredFrameRateHz,
-                (unsigned)acquisition.targetFrameRateHz);
-#if THERMAL_SERIAL_FRAME_DIAGNOSTIC
-            static bool emitted = false;
-            uint8_t payload[872];
-            float low, high;
-            if (!emitted && thermal.getNormalizedFrame(payload + 8, low, high, payload + 776)) {
-                memcpy(payload, &low, 4); memcpy(payload + 4, &high, 4);
-                uint32_t crc = 0xFFFFFFFFU;
-                for (uint8_t byte : payload) {
-                    crc ^= byte;
-                    for (unsigned bit = 0; bit < 8; ++bit)
-                        crc = (crc >> 1) ^ ((crc & 1U) ? 0xEDB88320U : 0U);
-                }
-                crc ^= 0xFFFFFFFFU;
-                Serial.printf("@THERMALFRAME:BEGIN:bytes=872 crc32=%08lX min=%.4f max=%.4f partial=%d masked=%u\n",
-                    (unsigned long)crc, low, high, acquisition.partialCalibration,
-                    (unsigned)acquisition.maskedPixels);
-                for (unsigned offset = 0; offset < sizeof(payload); offset += 32) {
-                    Serial.printf("@THERMALFRAME:%03u:", offset);
-                    for (unsigned i = offset; i < offset + 32 && i < sizeof(payload); ++i)
-                        Serial.printf("%02X", (unsigned)payload[i]);
-                    Serial.println();
-                }
-                Serial.printf("@THERMALFRAME:END:crc32=%08lX\n", (unsigned long)crc);
-                emitted = true;
-            }
-#endif
+            thermal.updateFrame();
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
+}
+
+// Serial transmission can block at 115200 baud. Consume published snapshots
+// from Arduino's loop task so printing never extends the IMU sampling interval.
+static void logSensorDiagnostics() {
+    portENTER_CRITICAL(&attitudeMux);
+    ImuRawData raw = latestImuRaw;
+    ImuHealth imuHealth = statusImuHealth;
+    ImuOrientationSnapshot orientation = statusImuOrientation;
+    uint32_t imuAgeMs = latestAttitudeUs ? uint32_t(micros()-latestAttitudeUs)/1000U : UINT32_MAX;
+    portEXIT_CRITICAL(&attitudeMux);
+    Serial.printf("[IMU] v14 estado=%s pronta=%d identidade=%d bias=%d tilt=%d tentativas=%lu erros_leitura=%lu idade_ms=%lu\n",
+        imuHealth.state,imuHealth.ready,(int)imuHealth.identity,imuHealth.biasCalibrated,
+        IMU_APPLY_TILT,(unsigned long)imuHealth.initAttempts,
+        (unsigned long)imuHealth.readErrors,(unsigned long)imuAgeMs);
+    if (imuHealth.ready && imuAgeMs != UINT32_MAX) {
+        Serial.printf("[IMU] sensor_XYZ accel_g=%.3f/%.3f/%.3f gyro_dps=%.2f/%.2f/%.2f angles_deg=%.2f/%.2f/%.2f intervalo_us=%lu lacunas=%lu\n",
+            raw.accelX,raw.accelY,raw.accelZ,raw.gyroX,raw.gyroY,raw.gyroZ,
+            raw.angleX,raw.angleY,raw.angleZ,(unsigned long)raw.sampleIntervalUs,
+            (unsigned long)raw.integrationGaps);
+    }
+    Serial.printf("[IMU] orientacao=%s referencia=%d ativa=%d parada=%d geracao=%lu repouso_ms=%lu lacunas=%lu\n",
+        orientation.state,orientation.referenceValid,orientation.enabled,orientation.stationary,
+        (unsigned long)orientation.generation,(unsigned long)orientation.stationaryMs,
+        (unsigned long)orientation.gaps);
+    if (orientation.invalidations) {
+        Serial.printf("[IMU] invalidacoes=%lu ultimo_motivo=%s amostra=%d instante_us=%lu intervalo_us=%lu gravidade_g=%.4f accel_g=%.4f/%.4f/%.4f\n",
+            (unsigned long)orientation.invalidations,
+            orientation.invalidReason ? orientation.invalidReason : "unknown",
+            finiteInvalidationSample(orientation),
+            (unsigned long)orientation.invalidSampleUs,
+            (unsigned long)orientation.invalidSampleIntervalUs,
+            finiteDiagnosticValue(orientation.invalidGravityNormG),
+            finiteDiagnosticValue(orientation.invalidAccelX),
+            finiteDiagnosticValue(orientation.invalidAccelY),
+            finiteDiagnosticValue(orientation.invalidAccelZ));
+    }
+    int error; uint32_t frames, age;
+    thermal.health(error, frames, age);
+    auto acquisition = thermal.acquisitionHealth();
+    Serial.printf("[TERMICA] v14 estado=%s frame=%d quadros=%lu idade_ms=%lu mask=%u dup=%lu timeout=%lu i2c_erros=%lu overruns=%lu erro=%d raw=%d leitura_ms=%lu ram_ms=%lu span_ms=%lu parcial=%d pixels_excluidos=%u aviso_calibracao=%d fps=%.2f alvo=%u\n",
+        acquisition.state, acquisition.frameReady, (unsigned long)frames, (unsigned long)age,
+        (unsigned)acquisition.subpageMask, (unsigned long)acquisition.duplicateSubpages,
+        (unsigned long)acquisition.frameTimeouts, (unsigned long)acquisition.readErrors,
+        (unsigned long)acquisition.overruns, error, acquisition.rawError,
+        (unsigned long)acquisition.readDurationMs, (unsigned long)acquisition.ramReadDurationMs,
+        (unsigned long)acquisition.frameSpanMs,
+        acquisition.partialCalibration, (unsigned)acquisition.maskedPixels,
+        acquisition.calibrationWarning, acquisition.measuredFrameRateHz,
+        (unsigned)acquisition.targetFrameRateHz);
+#if THERMAL_SERIAL_FRAME_DIAGNOSTIC
+    static bool emitted = false;
+    uint8_t payload[872];
+    float low, high;
+    if (!emitted && thermal.getNormalizedFrame(payload + 8, low, high, payload + 776)) {
+        memcpy(payload, &low, 4); memcpy(payload + 4, &high, 4);
+        uint32_t crc = 0xFFFFFFFFU;
+        for (uint8_t byte : payload) {
+            crc ^= byte;
+            for (unsigned bit = 0; bit < 8; ++bit)
+                crc = (crc >> 1) ^ ((crc & 1U) ? 0xEDB88320U : 0U);
+        }
+        crc ^= 0xFFFFFFFFU;
+        Serial.printf("@THERMALFRAME:BEGIN:bytes=872 crc32=%08lX min=%.4f max=%.4f partial=%d masked=%u\n",
+            (unsigned long)crc, low, high, acquisition.partialCalibration,
+            (unsigned)acquisition.maskedPixels);
+        for (unsigned offset = 0; offset < sizeof(payload); offset += 32) {
+            Serial.printf("@THERMALFRAME:%03u:", offset);
+            for (unsigned i = offset; i < offset + 32 && i < sizeof(payload); ++i)
+                Serial.printf("%02X", (unsigned)payload[i]);
+            Serial.println();
+        }
+        Serial.printf("@THERMALFRAME:END:crc32=%08lX\n", (unsigned long)crc);
+        emitted = true;
+    }
+#endif
 }
 
 // RGB uses its own capture task: waiting for a thermal subpage must not starve it.
@@ -308,19 +388,20 @@ void TaskSensorCore1(void *pvParameters) {
         }
         stepper.update(); // Also ramp explicit parking while acquisition is paused.
         portENTER_CRITICAL(&attitudeMux);
+        // Tilt follows IMU_APPLY_TILT; enabling GY-25 yaw is a separate choice.
+        // Both values describe head-frame tilt, despite the historical variable names.
         float dronePitch = latestPitch;
         float droneRoll = latestRoll;
         uint32_t attitudeUs = latestAttitudeUs;
         ImuOrientationSnapshot orientation = statusImuOrientation;
         portEXIT_CRITICAL(&attitudeMux);
+        orientation.ageMs = attitudeUs ? uint32_t(micros()-attitudeUs)/1000U : UINT32_MAX;
         if (!IMU_APPLY_TILT) dronePitch = droneRoll = 0.0f;
 
         // In the opt-in GY-25 mode the integrated head yaw replaces the
         // mechanical pan angle. At the reference pose both are equal, so this
         // is also the exact base-rotation correction without double counting.
-        if (scanning && orientation.enabled &&
-            (!orientation.referenceValid || orientation.state != "ready" ||
-             orientation.ageMs > 150 || orientation.gaps != 0)) {
+        if (scanning && orientation.enabled && !orientation.canApplyYaw()) {
             Serial.println("[IMU] Orientacao GY-25 perdeu validade; captura interrompida.");
             isScanningActive = false;
             scanning = false;
@@ -337,17 +418,23 @@ void TaskSensorCore1(void *pvParameters) {
                 float currentBaseAngle;
                 if (!stepper.getAngleAt(measurement.sampleTimeUs, currentBaseAngle) ||
                     (IMU_APPLY_TILT && (attitudeUs == 0 ||
-                     abs((int32_t)(measurement.sampleTimeUs-attitudeUs)) > 20000))) {
+                     uint32_t(micros() - attitudeUs) > 500000U))) {
                     ++poseDropCount;
                     continue;
                 }
-                if (orientation.enabled) {
-                    if (!orientation.referenceValid || orientation.state != "ready" ||
-                        orientation.ageMs > 150 || orientation.gaps != 0) {
-                        ++poseDropCount;
-                        continue;
-                    }
-                    currentBaseAngle = orientation.relativeHeadYawDeg;
+                // A queued orientation command may be applied during this
+                // batch. Do not mix its old motor pose with the new reference.
+                portENTER_CRITICAL(&attitudeMux);
+                bool yawReady = statusImuOrientation.enabled == orientation.enabled &&
+                    statusImuOrientation.generation == orientation.generation;
+                if (orientation.enabled)
+                    yawReady = yawReady && statusImuOrientation.canApplyYaw() && latestAttitudeUs &&
+                        uint32_t(micros()-latestAttitudeUs) <= 150000U &&
+                        headYawHistory.at(measurement.sampleTimeUs, currentBaseAngle);
+                portEXIT_CRITICAL(&attitudeMux);
+                if (!yawReady) {
+                    ++poseDropCount;
+                    continue;
                 }
                 using namespace ScanGeometry;
                 auto headDebug = inHeadDebug(measurement.distanceMm*0.001f,
@@ -372,17 +459,16 @@ void TaskSensorCore1(void *pvParameters) {
                 // The lens has a measured head-frame offset. Its optical side
                 // is selected by the persisted bench-calibration profile;
                 // reject rays outside FOV, near-field parallax and old frames.
-                uint32_t sampleTimeMs = millis() -
-                    (uint32_t)(micros()-measurement.sampleTimeUs)/1000U;
-                float thermalH = 0.0f, thermalV = 0.0f;
+                const uint32_t nowUs = micros(), nowMs = millis();
+                uint32_t sampleTimeMs = nowMs - uint32_t(nowUs-measurement.sampleTimeUs)/1000U;
+                ThermalYawContext thermalYawContext{orientation.enabled, orientation.generation, nowMs, nowUs};
                 float tempC = 21.0f; // Placeholder de transporte, não uma medição.
                 bool hasThermal = measurement.distanceMm*0.001f >= THERMAL_FUSION_MIN_RANGE_M &&
-                    thermalAngles(headPoint,
+                    thermal.tryGetHeadPointTemperature(headPoint,
                         {LIDAR_ORIGIN_X_M,LIDAR_ORIGIN_Y_M,LIDAR_ORIGIN_Z_M},
                         {THERMAL_OFFSET_X_M,THERMAL_OFFSET_Y_M,THERMAL_OFFSET_Z_M},
-                        THERMAL_INVERT_LIDAR_Y,thermalH,thermalV,
-                        thermal.getOrientationProfile()) &&
-                    thermal.tryGetPointTemperature(thermalH,thermalV,tempC,sampleTimeMs);
+                        THERMAL_INVERT_LIDAR_Y, tempC, sampleTimeMs,
+                        thermalYawAtTimestamp, &thermalYawContext);
                 if (hasThermal) ++thermalFusedPoints;
 
                 // Temperatura baixa não demonstra que a superfície seja planar.
@@ -654,6 +740,9 @@ void TaskCameraHttpCore0(void *pvParameters) {
             ImuOrientationSnapshot imuOrientation = statusImuOrientation;
             uint32_t imuAgeMs = latestAttitudeUs ? (uint32_t)(micros()-latestAttitudeUs)/1000U : UINT32_MAX;
             portEXIT_CRITICAL(&attitudeMux);
+            // The orientation was published alongside this raw sample. Its
+            // age must include the time spent waiting for the HTTP snapshot.
+            imuOrientation.ageMs = imuAgeMs;
             int thermalError;
             uint32_t thermalFrames, thermalAge;
             thermal.health(thermalError, thermalFrames, thermalAge);
@@ -663,7 +752,7 @@ void TaskCameraHttpCore0(void *pvParameters) {
             static char body[8192];
             int length = snprintf(body, sizeof(body),
                 "{\"lidarRpm\":%.2f,\"panDegrees\":%.3f,\"stepsPerRevolution\":%d,"
-                "\"timestampMs\":%lu,\"poseDrops\":%lu,\"imuCalibrated\":%s,\"encoder\":false,"
+                "\"timestampMs\":%lu,\"poseDrops\":%lu,\"queueDrops\":%lu,\"imuCalibrated\":%s,\"encoder\":false,"
                 "\"diagnosticVersion\":14,\"panEnabled\":%s,\"rgbReady\":%s,\"thermalReady\":%s,"
                 "\"imuReady\":%s,\"tagReady\":%s,\"thermalError\":%d,\"thermalFrames\":%lu,"
                 "\"thermalAgeMs\":%lu,\"thermalFusedPoints\":%lu,"
@@ -675,9 +764,14 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 "\"imuState\":\"%s\",\"imuIdentity\":%d,\"imuInitAttempts\":%lu,\"imuReadErrors\":%lu,"
                 "\"imuBiasCalibrated\":%s,\"imuTiltApplied\":%s,"
                 "\"imuOrientationState\":\"%s\",\"imuOrientationReferenceValid\":%s,"
-                "\"imuOrientationEnabled\":%s,\"imuOrientationStationary\":%s,"
+                "\"imuOrientationEnabled\":%s,\"imuStationary\":%s,"
                 "\"imuGravityValid\":%s,\"imuOrientationGeneration\":%lu,"
                 "\"imuOrientationAgeMs\":%lu,\"imuOrientationGaps\":%lu,"
+                "\"imuOrientationInvalidReason\":\"%s\",\"imuOrientationInvalidations\":%lu,"
+                "\"imuOrientationInvalidSampleValid\":%s,\"imuOrientationInvalidSampleUs\":%lu,"
+                "\"imuOrientationInvalidSampleIntervalUs\":%lu,\"imuOrientationInvalidGravityNormG\":%.4f,"
+                "\"imuOrientationInvalidAccelX\":%.4f,\"imuOrientationInvalidAccelY\":%.4f,"
+                "\"imuOrientationInvalidAccelZ\":%.4f,"
                 "\"imuStationaryMs\":%lu,\"imuRelativeHeadYawDeg\":%.3f,"
                 "\"imuRelativeBaseYawDeg\":%.3f,\"imuPitchDeg\":%.3f,\"imuRollDeg\":%.3f,"
                 "\"imuYawUncertaintyDeg\":%.3f,\"imuBaseQw\":%.6f,\"imuBaseQx\":%.6f,"
@@ -695,11 +789,12 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 "\"thermalDuplicateSubpages\":%lu,\"thermalFrameTimeouts\":%lu,\"thermalReadErrors\":%lu,"
                 "\"thermalOverruns\":%lu,\"thermalInvalidFrames\":%lu,\"thermalLastSubpage\":%d,"
                 "\"thermalRefreshHz\":%u,\"thermalI2cHz\":%lu,\"thermalReadDurationMs\":%lu,"
+                "\"thermalRamReadDurationMs\":%lu,"
                 "\"thermalFrameSpanMs\":%lu,\"thermalRawError\":%d,"
                 "\"thermalPartialCalibration\":%s,\"thermalMaskedPixels\":%u,\"thermalCalibrationWarning\":%d,"
                 "\"thermalRequestedFrameRateHz\":%u,\"thermalTargetFrameRateHz\":%u,"
                 "\"thermalFrameRateHz\":%.3f,\"thermalFrameRateWindowMs\":%lu}",
-                rpm,pan,STEPS_PER_REV,(unsigned long)updated,(unsigned long)poseDropCount,
+                rpm,pan,STEPS_PER_REV,(unsigned long)updated,(unsigned long)poseDropCount,(unsigned long)queueDropCount,
                 IMU_APPLY_TILT ? "true" : "false", panEnabled ? "true" : "false",
                 camera.isInitialized() ? "true" : "false", thermal.isInitialized() ? "true" : "false",
                 imuHealth.ready ? "true" : "false", uwbTag.isInitialized() ? "true" : "false",
@@ -721,6 +816,15 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 (unsigned long)imuOrientation.generation,
                 (unsigned long)imuOrientation.ageMs,
                 (unsigned long)imuOrientation.gaps,
+                imuOrientation.invalidReason ? imuOrientation.invalidReason : "unknown",
+                (unsigned long)imuOrientation.invalidations,
+                finiteInvalidationSample(imuOrientation) ? "true" : "false",
+                (unsigned long)imuOrientation.invalidSampleUs,
+                (unsigned long)imuOrientation.invalidSampleIntervalUs,
+                finiteDiagnosticValue(imuOrientation.invalidGravityNormG),
+                finiteDiagnosticValue(imuOrientation.invalidAccelX),
+                finiteDiagnosticValue(imuOrientation.invalidAccelY),
+                finiteDiagnosticValue(imuOrientation.invalidAccelZ),
                 (unsigned long)imuOrientation.stationaryMs,
                 imuOrientation.relativeHeadYawDeg, imuOrientation.relativeBaseYawDeg,
                 imuOrientation.pitchDeg, imuOrientation.rollDeg, imuOrientation.yawUncertaintyDeg,
@@ -746,6 +850,7 @@ void TaskCameraHttpCore0(void *pvParameters) {
                 (unsigned long)thermalAcquisition.invalidFrames, thermalAcquisition.lastSubpage,
                 (unsigned)thermalAcquisition.refreshHz, (unsigned long)thermalAcquisition.i2cHz,
                 (unsigned long)thermalAcquisition.readDurationMs,
+                (unsigned long)thermalAcquisition.ramReadDurationMs,
                 (unsigned long)thermalAcquisition.frameSpanMs, thermalAcquisition.rawError,
                 thermalAcquisition.partialCalibration ? "true" : "false",
                 (unsigned)thermalAcquisition.maskedPixels, thermalAcquisition.calibrationWarning,
@@ -872,13 +977,13 @@ void TaskCameraHttpCore0(void *pvParameters) {
             }
         } else if (path == "/thermal/frame-rate") {
             if (!isPost) {
-                sendHttpError(client,"405 Method Not Allowed","Use POST /thermal/frame-rate?fps=4 ou fps=8.");
+                sendHttpError(client,"405 Method Not Allowed","Use POST /thermal/frame-rate?fps=8.");
             } else if (isScanningActive || statusParking || statusPanMoving) {
                 sendHttpError(client,"409 Conflict","Pare o scanner antes de mudar a taxa termica.");
-            } else if (arguments != "fps=4" && arguments != "fps=8") {
-                sendHttpError(client,"400 Bad Request","Taxa esperada: fps=4 ou fps=8.");
+            } else if (arguments != "fps=8") {
+                sendHttpError(client,"400 Bad Request","A termica usa alvo fixo de 8 quadros/s.");
             } else {
-                uint8_t requested = arguments == "fps=8" ? 8 : 4;
+                uint8_t requested = THERMAL_DEFAULT_FULL_FPS;
                 portENTER_CRITICAL(&attitudeMux);
                 thermalFrameRateRequest = requested;
                 portEXIT_CRITICAL(&attitudeMux);
@@ -966,9 +1071,12 @@ void setup() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ);
     Wire.setTimeOut(100);
     thermal.loadOrientationProfile();
+    imu.begin();
+    // Let the physical sensors settle during the stationary gyro calibration;
+    // keep the MPU serviced throughout subsequent thermal initialization.
+    thermal.setCooperativeReadHook(serviceImuOnSharedBus);
     thermal.begin();
     camera.begin();
-    imu.begin();
 
     // Capacidade da fila FreeRTOS ampliada para 600 medições (~16.8 KB, margem de 300ms de buffer)
     scanQueue = xQueueCreate(600, sizeof(ScanPointPacket));
@@ -979,7 +1087,11 @@ void setup() {
     }
 
     xTaskCreatePinnedToCore(TaskSensorCore1, "SensorCore1", 10240, NULL, 2, NULL, 1);
-    xTaskCreatePinnedToCore(TaskAuxSensorsCore1, "AuxSensorsCore1", 12288, NULL, 1, NULL, 1);
+    // A thermal RAM copy must finish before the next 62.5 ms subpage. Let it
+    // resume ahead of per-point fusion after each blocking Wire transaction.
+    // Wire waits and the normal Aux delay still release this core to LiDAR;
+    // pan STEP pulses remain on their hardware timer/IRAM interrupt.
+    xTaskCreatePinnedToCore(TaskAuxSensorsCore1, "AuxSensorsCore1", 12288, NULL, 3, NULL, 1);
     if (camera.isInitialized() &&
         xTaskCreatePinnedToCore(TaskRgbCore1, "RgbCore1", 4096, NULL, 1, NULL, 1) != pdPASS) {
         Serial.println("[RGB] Sem memoria para iniciar a tarefa de captura.");
@@ -994,5 +1106,10 @@ void setup() {
 }
 
 void loop() {
+    static unsigned long lastSensorLogMs = 0;
+    if (millis() - lastSensorLogMs >= 5000) {
+        lastSensorLogMs = millis();
+        logSensorDiagnostics();
+    }
     vTaskDelay(pdMS_TO_TICKS(1000));
 }

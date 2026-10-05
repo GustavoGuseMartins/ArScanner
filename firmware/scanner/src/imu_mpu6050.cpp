@@ -41,6 +41,31 @@ float vectorNorm(const float *v) {
 
 ImuSensor::ImuSensor() {}
 
+void ImuSensor::resetOrientationReferenceWindow() {
+    orientationReferenceGoodUs = 0;
+    for (double &value : orientationReferenceGyroIntegral) value = 0;
+}
+
+void ImuSensor::invalidateOrientationReference(const char *reason, const ImuRawData *sample,
+                                               uint32_t sampleUs, uint32_t intervalUs) {
+    // Count the transition once; a later failing read must not overwrite the
+    // sample that actually invalidated an otherwise usable reference.
+    if (!orientationReferenceValid) return;
+    orientationReferenceValid = false;
+    ++orientationGaps;
+    ++orientationInvalidations;
+    orientationYawUncertaintyDeg = 180.f;
+    orientationInvalidReason = reason;
+    orientationInvalidSampleUs = sampleUs;
+    orientationInvalidSampleIntervalUs = intervalUs;
+    orientationInvalidSampleValid = sample != nullptr;
+    orientationInvalidAccel[0] = sample ? sample->accelX : 0;
+    orientationInvalidAccel[1] = sample ? sample->accelY : 0;
+    orientationInvalidAccel[2] = sample ? sample->accelZ : 0;
+    orientationInvalidGravityNormG = sample
+        ? vectorNorm(orientationInvalidAccel) : 0;
+}
+
 bool ImuSensor::readSample(ImuRawData &sample) {
     uint8_t bytes[14];
     if (!readRegisters(0x3B,bytes,sizeof(bytes))) {
@@ -68,6 +93,11 @@ bool ImuSensor::begin() {
     orientationCollecting = false;
     orientationGravityValid = false;
     orientationStationary = false;
+    orientationSampleSeen = false;
+    orientationReferenceTimedOut = false;
+    resetOrientationReferenceWindow();
+    for (float &value : orientationGyroResidualDps) value = 0;
+    for (float &value : orientationPreviousGyroDps) value = 0;
     orientationGaps = 0;
     orientationGeneration = 0;
     orientationLastUpdateUs = 0;
@@ -134,6 +164,16 @@ bool ImuSensor::update() {
         health.state = "sample_read_failed";
         health.ready = false;
         if (!initialized) health.biasCalibrated = false;
+        const uint32_t failedSampleUs = micros();
+        invalidateOrientationReference("read_failed", nullptr, failedSampleUs,
+            lastUpdateUs ? uint32_t(failedSampleUs-lastUpdateUs) : 0);
+        orientationStationary = false;
+        if (orientationCollecting) resetOrientationReferenceWindow();
+        if (orientationCollecting && uint32_t(millis()-orientationReferenceStartedMs) >= 6000U) {
+            orientationCollecting = false;
+            orientationReferenceTimedOut = true;
+            resetOrientationReferenceWindow();
+        }
         lastUpdateUs = 0;
         return false;
     }
@@ -161,13 +201,24 @@ bool ImuSensor::update() {
 void ImuSensor::updateOrientation(float panDegrees) {
     if (!initialized) return;
     orientationLastPanDeg = panDegrees;
+    // Integrate/collect once per acquired sample, using its acquisition clock.
+    // HTTP work or a repeated call must neither add still time nor age a sample.
+    if (orientationSampleSeen && orientationLastUpdateUs == lastUpdateUs) return;
+    const uint32_t intervalUs = orientationSampleSeen
+        ? uint32_t(lastUpdateUs - orientationLastUpdateUs) : 0U;
+    const bool continuous = intervalUs > 0U && intervalUs <= 100000U &&
+        latest.sampleIntervalUs > 0U && latest.sampleIntervalUs <= 100000U;
+    const bool previousStationary = orientationStationary;
+    orientationLastUpdateUs = lastUpdateUs;
+    orientationSampleSeen = true;
     const ImuRawData sample = latest;
+    const float gyroSensor[3] = { sample.gyroX, sample.gyroY, sample.gyroZ };
     // Physical mapping validated on the assembled head: sensor +X is down,
     // +Y is right and +Z points toward the rear. This is a proper right-handed
     // head frame: Xhead=Ysensor, Yhead=-Xsensor, Zhead=Zsensor.
     float up[3] = { sample.accelY, -sample.accelX, sample.accelZ };
     float norm = vectorNorm(up);
-    orientationGravityValid = isfinite(norm) && norm >= .75f && norm <= 1.25f;
+    orientationGravityValid = isfinite(norm) && norm >= .85f && norm <= 1.15f;
     if (orientationGravityValid) {
         up[0] /= norm; up[1] /= norm; up[2] /= norm;
         for (int i=0; i<3; ++i) orientationGravity[i] = up[i];
@@ -178,22 +229,31 @@ void ImuSensor::updateOrientation(float panDegrees) {
     // pan-rate gyro value is expected and must not invalidate the scan.
     orientationStationary = orientationGravityValid && isfinite(gyroNorm) &&
         gyroNorm <= ReferenceGyroStillDps;
-    uint32_t nowUs = micros();
-    float dt = orientationLastUpdateUs ? uint32_t(nowUs - orientationLastUpdateUs) * 1e-6f : 0.f;
-    orientationLastUpdateUs = nowUs;
-    uint32_t dtMs = uint32_t(dt * 1000.f);
+    const float dt = intervalUs * 1e-6f;
 
     if (orientationCollecting) {
-        if (orientationStationary) {
-            orientationReferenceGoodMs = min<uint32_t>(6000U, orientationReferenceGoodMs + dtMs);
-            const float blend = orientationReferenceGoodMs <= dtMs ? 1.f : .04f;
+        // A blind interval cannot join two separate stationary windows.
+        if (!continuous) resetOrientationReferenceWindow();
+        if (orientationStationary && previousStationary && continuous) {
+            // Retain sub-millisecond time; frequent reads otherwise round away
+            // a substantial part of the observed 3-second stationary window.
+            const uint32_t acceptedUs = min<uint32_t>(intervalUs, 6000000U-orientationReferenceGoodUs);
+            orientationReferenceGoodUs += acceptedUs;
+            // Trapezoidal, acquisition-time weighted mean. Unequal thermal
+            // intervals and repeated processing must not bias the residual.
+            for (int i=0; i<3; ++i)
+                orientationReferenceGyroIntegral[i] +=
+                    .5 * (double(orientationPreviousGyroDps[i]) + double(gyroSensor[i])) * acceptedUs;
+            const float blend = orientationReferenceGoodUs <= acceptedUs ? 1.f : .04f;
             for (int i=0; i<3; ++i)
                 orientationReferenceGravity[i] = (1.f-blend)*orientationReferenceGravity[i] + blend*orientationGravity[i];
             float gnorm = vectorNorm(orientationReferenceGravity);
             if (gnorm > .001f) for (float &value : orientationReferenceGravity) value /= gnorm;
         }
         uint32_t elapsed = uint32_t(millis() - orientationReferenceStartedMs);
-        if (elapsed >= 3000 && orientationReferenceGoodMs >= 2400) {
+        if (elapsed >= 3000 && orientationReferenceGoodUs >= 2400000U && orientationStationary) {
+            for (int i=0; i<3; ++i)
+                orientationGyroResidualDps[i] = float(orientationReferenceGyroIntegral[i] / orientationReferenceGoodUs);
             orientationReferencePanDeg = panDegrees;
             orientationRelativeYawDeg = 0;
             orientationReferenceValid = true;
@@ -207,18 +267,29 @@ void ImuSensor::updateOrientation(float panDegrees) {
         } else if (elapsed >= 6000) {
             orientationCollecting = false;
             orientationReferenceValid = false;
-            orientationReferenceGoodMs = 0;
+            orientationReferenceTimedOut = true;
+            resetOrientationReferenceWindow();
         }
-    } else if (orientationReferenceValid && orientationGravityValid) {
-        if (dt <= 0.f || dt > .1f) {
-            orientationGaps++;
-            orientationReferenceValid = false;
-            orientationYawUncertaintyDeg = 180.f;
+    } else if (orientationReferenceValid) {
+        if (!continuous || !orientationGravityValid || !isfinite(gyroNorm)) {
+            const char *reason = !continuous ? "sample_gap"
+                : !orientationGravityValid ? "invalid_gravity" : "invalid_gyro";
+            invalidateOrientationReference(reason, &sample, lastUpdateUs, intervalUs);
         } else {
+            // Remove the warm stationary residual collected at this explicit
+            // reference, then project on the measured up direction. The raw
+            // driver readings retain their independently calibrated bias.
+            const float correctedGyroHead[3] = {
+                gyroHead[0] - orientationGyroResidualDps[1],
+                gyroHead[1] + orientationGyroResidualDps[0],
+                gyroHead[2] - orientationGyroResidualDps[2]
+            };
             // Project the bias-corrected gyro on the measured up direction;
             // this remains valid with the observed non-level PCB mounting.
-            float rate = gyroHead[0]*orientationGravity[0] +
-                gyroHead[1]*orientationGravity[1] + gyroHead[2]*orientationGravity[2];
+            // Head axes are right handed; clockwise Unity/pan yaw has the
+            // opposite sign to the right-handed rotation around measured up.
+            float rate = -(correctedGyroHead[0]*orientationGravity[0] +
+                correctedGyroHead[1]*orientationGravity[1] + correctedGyroHead[2]*orientationGravity[2]);
             if (isfinite(rate)) {
                 orientationRelativeYawDeg += rate * dt;
                 orientationYawUncertaintyDeg = min(180.f,
@@ -230,7 +301,15 @@ void ImuSensor::updateOrientation(float panDegrees) {
         orientationPitchDeg = atan2f(orientationGravity[2],
             hypotf(orientationGravity[0], orientationGravity[1])) * DegreesPerRadian;
         orientationRollDeg = atan2f(orientationGravity[0], orientationGravity[1]) * DegreesPerRadian;
+
+        // Inclinação filtrada nos eixos da cabeça, independente do toggle yaw.
+        // Os offsets nominais não substituem calibração física da montagem.
+        float rawPitch = orientationPitchDeg - IMU_MOUNT_NOMINAL_PITCH_DEG;
+        float rawRoll  = orientationRollDeg  - IMU_MOUNT_NOMINAL_ROLL_DEG;
+        filteredTiltPitch = filteredTiltPitch * 0.92f + rawPitch * 0.08f;
+        filteredTiltRoll  = filteredTiltRoll  * 0.92f + rawRoll  * 0.08f;
     }
+    for (int i=0; i<3; ++i) orientationPreviousGyroDps[i] = gyroSensor[i];
     (void)panDegrees;
 }
 
@@ -239,13 +318,21 @@ bool ImuSensor::requestOrientationReference(float panDegrees) {
     orientationEnabled = false;
     orientationReferenceValid = false;
     orientationCollecting = true;
+    orientationReferenceTimedOut = false;
     orientationReferenceStartedMs = millis();
-    orientationReferenceGoodMs = 0;
+    resetOrientationReferenceWindow();
+    for (float &value : orientationGyroResidualDps) value = 0;
+    orientationPreviousGyroDps[0] = latest.gyroX;
+    orientationPreviousGyroDps[1] = latest.gyroY;
+    orientationPreviousGyroDps[2] = latest.gyroZ;
     orientationReferencePanDeg = panDegrees;
     orientationReferenceGravity[0] = orientationGravity[0];
     orientationReferenceGravity[1] = orientationGravity[1];
     orientationReferenceGravity[2] = orientationGravity[2];
-    orientationLastUpdateUs = micros();
+    // Synchronize to the last acquired sample. The next new reading starts
+    // collection; processing the same reading twice must not count as rest.
+    orientationLastUpdateUs = lastUpdateUs;
+    orientationSampleSeen = true;
     return true;
 }
 
@@ -263,16 +350,26 @@ ImuOrientationSnapshot ImuSensor::getOrientation() const {
     result.stationary = orientationStationary;
     result.generation = orientationGeneration;
     result.gaps = orientationGaps;
-    result.stationaryMs = orientationReferenceGoodMs;
+    result.stationaryMs = orientationReferenceGoodUs / 1000U;
     result.relativeHeadYawDeg = orientationReferencePanDeg + orientationRelativeYawDeg;
     result.relativeBaseYawDeg = wrapDegrees(result.relativeHeadYawDeg - orientationLastPanDeg);
     result.pitchDeg = orientationPitchDeg - orientationReferencePitchDeg;
     result.rollDeg = orientationRollDeg - orientationReferenceRollDeg;
     result.yawUncertaintyDeg = orientationYawUncertaintyDeg;
+    result.invalidReason = orientationInvalidReason;
+    result.invalidations = orientationInvalidations;
+    result.invalidSampleUs = orientationInvalidSampleUs;
+    result.invalidSampleIntervalUs = orientationInvalidSampleIntervalUs;
+    result.invalidSampleValid = orientationInvalidSampleValid;
+    result.invalidGravityNormG = orientationInvalidGravityNormG;
+    result.invalidAccelX = orientationInvalidAccel[0];
+    result.invalidAccelY = orientationInvalidAccel[1];
+    result.invalidAccelZ = orientationInvalidAccel[2];
     float half = result.relativeHeadYawDeg * .5f / DegreesPerRadian;
     result.qw = cosf(half); result.qy = sinf(half); result.qx = result.qz = 0;
-    result.ageMs = orientationLastUpdateUs ? uint32_t(micros() - orientationLastUpdateUs) / 1000U : UINT32_MAX;
+    result.ageMs = orientationSampleSeen ? uint32_t(micros() - orientationLastUpdateUs) / 1000U : UINT32_MAX;
     if (orientationCollecting) result.state = "reference_collecting";
+    else if (orientationReferenceTimedOut) result.state = "reference_timeout";
     else if (!orientationReferenceValid) result.state = orientationGaps ? "reference_invalid" : "no_reference";
     else if (orientationEnabled) result.state = "ready";
     else result.state = "referenced";
@@ -286,6 +383,14 @@ float ImuSensor::getPitch() {
 float ImuSensor::getRoll() {
     if (!initialized) return 0;
     return IMU_ROLL_SIGN*(IMU_ROLL_AXIS==0 ? latest.angleX : IMU_ROLL_AXIS==1 ? latest.angleY : latest.angleZ);
+}
+float ImuSensor::getFilteredTiltPitch() {
+    if (!initialized) return 0;
+    return filteredTiltPitch;
+}
+float ImuSensor::getFilteredTiltRoll() {
+    if (!initialized) return 0;
+    return filteredTiltRoll;
 }
 float ImuSensor::getYaw() { return initialized ? latest.angleZ : 0; }
 ImuRawData ImuSensor::getRawAxes() { return initialized ? latest : ImuRawData{}; }

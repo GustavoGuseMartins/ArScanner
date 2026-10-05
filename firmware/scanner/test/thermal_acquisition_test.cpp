@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <Preferences.h>
 
 static bool validBit(const uint8_t *mask, unsigned pixel) {
     return (mask[pixel >> 3] & (1U << (pixel & 7U))) != 0;
@@ -119,7 +120,7 @@ static void validateDriverBounds() {
     Wire.ready(0); Wire.continuousReady = true;
     requests = Wire.requests;
     assert(device.readSubpage(frame, page, stamp) == -8);
-    assert(Wire.requests - requests <= 28); // One RAM read, never the old 5 retries.
+    assert(Wire.requests - requests == 15); // Status + 13 RAM transfers + status; no torn-read retries.
     Wire.continuousReady = false; Wire.requestMs = 20; Wire.ready(0);
     started = fakeMillis;
     assert(device.readSubpage(frame, page, stamp) == ThermalAcquisition::ReadDeadline);
@@ -170,6 +171,253 @@ static void validateDriverBounds() {
     for (unsigned i : {41U, 69U, 97U, 125U, 153U, 181U}) assert(Wire.registers[0x2400 + i] == 0xFFFF);
 }
 
+static void validateTransferSizes() {
+    Wire.fixture();
+    ThermalMlxDevice device;
+    assert(device.begin(Wire, 5) == 0);
+    unsigned calibrationTransfers = 0;
+    for (size_t i = 0; i < Wire.requestSizes.size(); ++i) {
+        if (Wire.requestAddresses[i] < 0x2400 || Wire.requestAddresses[i] >= 0x2740) continue;
+        assert(Wire.requestAddresses[i] == 0x2400 + calibrationTransfers * 32);
+        assert(Wire.requestSizes[i] == 64); // Factory calibration retains its established transfer size.
+        ++calibrationTransfers;
+    }
+    assert(calibrationTransfers == 26 && Wire.eepromWrites == 0);
+
+    const size_t firstRequest = Wire.requestSizes.size();
+    float frame[768]; for (float &value : frame) value = NAN;
+    uint8_t page; uint32_t stamp;
+    Wire.ready(0);
+    assert(device.readSubpage(frame, page, stamp) == 0 && page == 0);
+    unsigned ramTransfers = 0, ramBytes = 0;
+    for (size_t i = firstRequest; i < Wire.requestSizes.size(); ++i) {
+        if (Wire.requestAddresses[i] < 0x0400 || Wire.requestAddresses[i] >= 0x0740) continue;
+        assert(Wire.requestAddresses[i] == 0x0400 + ramTransfers * 64);
+        assert(Wire.requestSizes[i] == 128); // 64 words fit in the ESP32 Wire receive buffer.
+        ramBytes += Wire.requestSizes[i];
+        ++ramTransfers;
+    }
+    assert(ramTransfers == 13 && ramBytes == 1664 && Wire.eepromWrites == 0);
+    assert(Wire.requestSizes.size() - firstRequest == 16); // Status, RAM, status and control.
+    puts("Thermal transfer sizes PASS: EEPROM 26 x 64 bytes, RAM 13 x 128 bytes, full 832-word copy, no EEPROM writes.");
+}
+
+struct RamTimingProbe { unsigned delayedTransfers = 0; };
+
+static void delayRamTransfers(void *context) {
+    auto &probe = *static_cast<RamTimingProbe *>(context);
+    assert(Wire.available() == 0);
+    if (Wire.address >= 0x0400 && Wire.address < 0x0740) {
+        ++probe.delayedTransfers;
+        fakeMillis += 3; // Models time spent servicing MPU or preempted by another task.
+    }
+}
+
+static void validateRamReadTiming() {
+    Wire.fixture(); ThermalMlxDevice device;
+    assert(device.begin(Wire, 5) == 0);
+    float frame[768]; for (float &value : frame) value = NAN;
+    uint8_t page; uint32_t stamp;
+    assert(device.readSubpage(frame,page,stamp) == ThermalAcquisition::NotReady);
+    assert(device.ramReadDurationMs() == 0 && device.readDurationMs() == 1);
+    Wire.requestMs = 2; Wire.ready(0);
+    assert(device.readSubpage(frame,page,stamp) == 0);
+    assert(device.ramReadDurationMs() == 26 && device.readDurationMs() == 32);
+
+    RamTimingProbe probe;
+    device.setCooperativeReadHook(delayRamTransfers,&probe);
+    Wire.ready(1);
+    assert(device.readSubpage(frame,page,stamp) == 0);
+    assert(probe.delayedTransfers == 13);
+    assert(device.ramReadDurationMs() == 65 && device.readDurationMs() == 71);
+    assert(Wire.eepromWrites == 0); // Instrumentation cannot change calibration or transfers.
+    device.setCooperativeReadHook(nullptr);
+
+    Wire.continuousReady = true; Wire.ready(0);
+    assert(device.readSubpage(frame,page,stamp) == -8);
+    assert(device.ramReadDurationMs() == 26 && device.readDurationMs() == 30);
+    Wire.continuousReady = false;
+    assert(device.readSubpage(frame,page,stamp) == 0); // Read the newly ready half coherently.
+    assert(device.readSubpage(frame,page,stamp) == ThermalAcquisition::NotReady);
+    assert(device.ramReadDurationMs() == 0); // Never expose the prior copy as a polling duration.
+    Wire.failRead = true;
+    assert(device.readSubpage(frame,page,stamp) == -1 && device.ramReadDurationMs() == 0);
+    Wire.failRead = false; Wire.requestMs = 30; Wire.ready(0);
+    assert(device.readSubpage(frame,page,stamp) == ThermalAcquisition::ReadDeadline);
+    assert(device.ramReadDurationMs() == 300 && device.readDurationMs() == 330);
+    Wire.requestMs = 1; fakeMillis = UINT32_MAX - 8U; Wire.ready(1);
+    assert(device.readSubpage(frame,page,stamp) == 0);
+    assert(device.ramReadDurationMs() == 13 && device.readDurationMs() == 16);
+
+    Wire.fixture(); ThermalSensor sensor;
+    assert(sensor.begin());
+    Wire.requestMs = 2; Wire.ready(0);
+    assert(!sensor.updateFrame());
+    auto health = sensor.acquisitionHealth();
+    assert(health.ramReadDurationMs == 26 && health.readDurationMs == 32);
+    fakeMillis += 63; Wire.ready(1);
+    assert(sensor.updateFrame());
+    health = sensor.acquisitionHealth();
+    assert(health.ramReadDurationMs == 26 && health.readDurationMs == 32 && health.frameReady);
+    Wire.continuousReady = true; Wire.ready(0);
+    assert(!sensor.updateFrame());
+    health = sensor.acquisitionHealth();
+    assert(health.ramReadDurationMs == 26 && health.readDurationMs == 30 && health.overruns == 1);
+    puts("Thermal RAM timing PASS: only the 832-word copy, cooperative/preemption delays included, polling/reset/read failures/deadline, clock wrap, successful and torn-read health publication, unchanged EEPROM.");
+}
+
+struct CooperativeTransferProbe {
+    uint32_t callbacks = 0, samples = 0, lastSampleMs = 0, maximumSampleIntervalMs = 0;
+};
+
+static void serviceSecondaryI2cDevice(void *context) {
+    auto &probe = *static_cast<CooperativeTransferProbe *>(context);
+    ++probe.callbacks;
+    assert(Wire.available() == 0); // Hook cannot overwrite unread thermal bytes.
+    if (uint32_t(millis()-probe.lastSampleMs) < 10U) return;
+    const uint32_t clock = Wire.clock, primaryRequestMs = Wire.requestMs;
+    // Model a short 14-byte MPU transaction between 128-byte thermal chunks.
+    Wire.beginTransmission(0x68);
+    Wire.write(0); Wire.write(0x3B);
+    assert(Wire.endTransmission(false) == 0);
+    Wire.requestMs = 2;
+    assert(Wire.requestFrom(0x68,14) == 14);
+    for (unsigned i=0; i<14; ++i) assert(Wire.read() == int(i));
+    Wire.requestMs = primaryRequestMs;
+    assert(Wire.available() == 0 && Wire.clock == clock);
+    probe.maximumSampleIntervalMs = std::max(probe.maximumSampleIntervalMs,
+        uint32_t(millis()-probe.lastSampleMs));
+    probe.lastSampleMs = millis();
+    ++probe.samples;
+}
+
+static void validateCooperativeReadHook() {
+    Wire.fixture(); Wire.clock = 100000;
+    ThermalMlxDevice device;
+    assert(device.begin(Wire,3) == 0);
+    float baseline[768], interleaved[768]; uint8_t page; uint32_t stamp;
+    for (float &value : baseline) value = NAN;
+    for (float &value : interleaved) value = NAN;
+    Wire.ready(0);
+    assert(device.readSubpage(baseline,page,stamp) == 0);
+    for (unsigned i=0; i<7; ++i) Wire.registers[0x3B+i] = uint16_t((2U*i << 8) | (2U*i+1U));
+    CooperativeTransferProbe probe;
+    probe.lastSampleMs = millis();
+    device.setCooperativeReadHook(serviceSecondaryI2cDevice,&probe);
+    Wire.requestMs = 12; // 128-byte thermal transfers at the slow fallback bus.
+    Wire.ready(0);
+    const uint32_t started = millis();
+    assert(device.readSubpage(interleaved,page,stamp) == 0 && page == 0);
+    assert(millis()-started <= 250U && device.readDurationMs() <= 250U);
+    assert(probe.callbacks == 16U && probe.samples >= 13U && probe.maximumSampleIntervalMs <= 30U);
+    assert(Wire.clock == 100000 && Wire.eepromWrites == 0);
+    assert(std::memcmp(baseline,interleaved,sizeof baseline) == 0); // No torn/corrupted thermal RAM.
+    const uint32_t callbacks = probe.callbacks;
+    device.setCooperativeReadHook(nullptr);
+    Wire.requestMs = 1;
+    assert(device.readSubpage(interleaved,page,stamp) == ThermalAcquisition::NotReady);
+    assert(probe.callbacks == callbacks);
+
+    // The public sensor forwards the callback during initialization as well,
+    // keeping an already initialized MPU fresh through EEPROM read chunks.
+    Wire.fixture();
+    for (unsigned i=0; i<7; ++i) Wire.registers[0x3B+i] = uint16_t((2U*i << 8) | (2U*i+1U));
+    ThermalSensor sensor;
+    CooperativeTransferProbe initialization;
+    initialization.lastSampleMs = millis();
+    sensor.setCooperativeReadHook(serviceSecondaryI2cDevice,&initialization);
+    assert(sensor.begin() && initialization.callbacks >= 28U && initialization.samples > 0);
+    assert(sensor.acquisitionHealth().refreshHz == 16 && Wire.eepromWrites == 0);
+    puts("Thermal cooperative I2C hook: drained transfer boundaries, bounded 100 kHz interleaving, unchanged RAM/math, at most 30 ms secondary sample gaps, immutable EEPROM, optional hook and initialization forwarding.");
+}
+
+static void validateFrameRatePreferences() {
+    static_assert(THERMAL_DEFAULT_FULL_FPS == 8, "Native regression must exercise the 8 full-frame/s default");
+    Preferences::clear();
+    Wire.fixture();
+    ThermalSensor defaults;
+    auto health = defaults.acquisitionHealth();
+    assert(health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 && health.refreshHz == 16);
+    defaults.loadOrientationProfile();
+    assert(defaults.begin());
+    health = defaults.acquisitionHealth();
+    assert(health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 && health.refreshHz == 16);
+    assert((Wire.registers[0x800D] & 0x0380U) == (5U << 7));
+    Preferences prefs;
+    assert(prefs.begin("arscanner", false) && !prefs.isKey("thermal_fps"));
+
+    // Legacy settings cannot select a slower user rate; loading them does not
+    // rewrite unrelated NVS preferences or the independent orientation profile.
+    for (int saved : {4, 8, 0, 3, -8, 16, std::numeric_limits<int>::max()}) {
+        Preferences::clear();
+        prefs.putInt("thermal_fps", saved);
+        prefs.putInt("thermal_dir", 3);
+        Wire.fixture();
+        ThermalSensor restored;
+        restored.loadOrientationProfile();
+        assert(restored.begin());
+        health = restored.acquisitionHealth();
+        assert(health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 &&
+            health.refreshHz == 16 && health.i2cHz == 400000);
+        assert((Wire.registers[0x800D] & 0x0380U) == (5U << 7));
+        assert(restored.getOrientationProfile() == 3 && prefs.getInt("thermal_dir", -1) == 3);
+        assert(prefs.getInt("thermal_fps", -1) == saved); // Loading is not a preference rewrite.
+    }
+
+    Preferences::clear(); Wire.fixture();
+    ThermalSensor selected;
+    selected.loadOrientationProfile();
+    assert(selected.begin() && completeFrame(selected));
+    assert(selected.acquisitionHealth().frameReady);
+    Wire.ready(1); assert(!selected.updateFrame());
+    const uint8_t partialMask = selected.acquisitionHealth().subpageMask;
+    assert(!selected.requestFrameRate(4)); // No user-selectable 4 fps, even with a valid pending pair.
+    health = selected.acquisitionHealth();
+    assert(health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 && health.refreshHz == 16 &&
+        health.frameReady && health.subpageMask == partialMask && !prefs.isKey("thermal_fps"));
+
+    // Automatic recovery remains distinct from user selection. A retry of the
+    // only supported target discards both the old snapshot and any partial pair.
+    Wire.continuousReady = true;
+    for (unsigned i = 0; i < 3; ++i) { Wire.ready(i & 1U); assert(!selected.updateFrame()); }
+    assert(selected.acquisitionHealth().targetFrameRateHz == 8);
+    Wire.continuousReady = false;
+    Wire.ready(1); assert(!selected.updateFrame());
+    assert(selected.requestFrameRate(8));
+    health = selected.acquisitionHealth();
+    assert(health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 && health.refreshHz == 16);
+    assert(!prefs.isKey("thermal_fps"));
+    Wire.ready(0); assert(!selected.updateFrame());
+    fakeMillis += 63; Wire.ready(1); assert(selected.updateFrame());
+    const uint16_t control = Wire.registers[0x800D];
+    for (uint8_t invalid : {uint8_t(0), uint8_t(4), uint8_t(6), uint8_t(16), uint8_t(255)}) {
+        assert(!selected.requestFrameRate(invalid));
+        health = selected.acquisitionHealth();
+        assert(health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 && health.refreshHz == 16 &&
+            Wire.registers[0x800D] == control && !prefs.isKey("thermal_fps"));
+    }
+    prefs.end(); Preferences::clear();
+    puts("Thermal fixed-rate PASS: 8 full fps/16 subpages, legacy rate ignored, orientation preserved, 4 fps rejected without side effects, 8 fps recovery discards old frames, no rate preference writes.");
+}
+
+static void validateMeasuredFrameRate() {
+    Preferences::clear(); Wire.fixture(); Wire.requestMs = 0;
+    ThermalSensor sensor;
+    assert(sensor.begin());
+    for (unsigned frame = 0; frame < 16; ++frame) {
+        fakeMillis += 63; Wire.ready(0); assert(!sensor.updateFrame());
+        fakeMillis += 62; Wire.ready(1); assert(sensor.updateFrame());
+    }
+    auto health = sensor.acquisitionHealth();
+    assert(health.frameReady && health.frameRateWindowMs == 2000 && health.measuredFrameRateHz == 8.f &&
+        health.targetFrameRateHz == 8 && health.refreshHz == 16);
+    assert(!sensor.requestFrameRate(4));
+    health = sensor.acquisitionHealth();
+    assert(health.frameReady && health.frameRateWindowMs == 2000 && health.measuredFrameRateHz == 8.f);
+    Preferences::clear();
+    puts("Thermal measured frame rate PASS: 16 complete 0+1 pairs over 2000 ms report 8 fps; rejected 4 fps cannot reset the measurement.");
+}
+
 static void validateAutomaticSubpageControl() {
     // Figure 12 control fields: alternate subpages (B0=1, hold/repeat/selection
     // cleared), chess B12, ADC B11..10=2, refresh B9..7=4. Preserve reserved
@@ -205,7 +453,7 @@ static void validateAutomaticSubpageControl() {
     // before a half-frame can become a published measurement.
     realFixture(); Wire.registers[0x800D] = 0x7F39;
     ThermalSensor sensor;
-    assert(sensor.begin() && Wire.registers[0x800D] == 0x7A01);
+    assert(sensor.begin() && Wire.registers[0x800D] == 0x7A81);
     Wire.registers[0x800D] |= 0x0018U;
     fakeMillis += 125;
     assert(Wire.simulateConversion() && (Wire.registers[0x8000] & 1U) == 1);
@@ -214,7 +462,7 @@ static void validateAutomaticSubpageControl() {
     assert(!std::strcmp(invalidControl.state, "invalid_configuration") &&
         invalidControl.rawError == ThermalAcquisition::InvalidConfiguration &&
         !invalidControl.subpageMask && !invalidControl.frameReady && !invalidControl.duplicateSubpages);
-    assert(sensor.begin() && Wire.registers[0x800D] == 0x7A01);
+    assert(sensor.begin() && Wire.registers[0x800D] == 0x7A81);
 
     // Fault injection: a stalled sensor reporting only page1 despite correct
     // control bits still cannot form a frame. These forced ready IDs model the
@@ -396,14 +644,77 @@ static void validateSensorPublication() {
     assert(error == ThermalAcquisition::FrameTimeout);
 }
 
+struct ThermalPoseFixture {
+    uint32_t lidarTimestamp, frameTimestamp;
+    float lidarPan, framePan;
+    unsigned calls = 0, rejectCall = 0;
+    ThermalSensor *publishDuringLookup = nullptr;
+    ThermalPoseFixture(uint32_t lidarTime, uint32_t frameTime, float lidarYaw, float frameYaw)
+        : lidarTimestamp(lidarTime), frameTimestamp(frameTime), lidarPan(lidarYaw), framePan(frameYaw) {}
+    static bool lookup(void *context, uint32_t timestamp, float &pan) {
+        auto &fixture = *static_cast<ThermalPoseFixture *>(context);
+        ++fixture.calls;
+        assert(fixture.calls <= 2);
+        assert(timestamp == (fixture.calls == 1 ? fixture.lidarTimestamp : fixture.frameTimestamp));
+        if (fixture.calls == fixture.rejectCall) return false;
+        pan = fixture.calls == 1 ? fixture.lidarPan : fixture.framePan;
+        if (fixture.calls == 2 && fixture.publishDuringLookup)
+            assert(completeFrame(*fixture.publishDuringLookup));
+        return true;
+    }
+};
+
+static void validateThermalPoseSynchronization() {
+    realFixture(); ThermalSensor sensor;
+    assert(sensor.begin() && completeFrame(sensor));
+    int error; uint32_t frames, age;
+    sensor.health(error,frames,age);
+    const uint32_t lidarTime = fakeMillis, frameTime = fakeMillis-age;
+    const ScanGeometry::Vec3 hit = {-2,0,0}, origin = {0,0,0}, offset = {0,0,0};
+    float expected = -999, uncompensated = -999, actual = -999;
+    assert(sensor.tryGetPointTemperature(12,0,expected,lidarTime));
+    assert(sensor.tryGetPointTemperature(0,0,uncompensated,lidarTime));
+    assert(std::fabs(expected-uncompensated) > .001f);
+    ThermalPoseFixture rotated(lidarTime,frameTime,12,0);
+    assert(sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,lidarTime,
+        ThermalPoseFixture::lookup,&rotated));
+    assert(rotated.calls == 2 && std::fabs(actual-expected) < .0001f);
+    ThermalPoseFixture stationary(lidarTime,frameTime,35,35);
+    assert(sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,lidarTime,
+        ThermalPoseFixture::lookup,&stationary));
+    assert(stationary.calls == 2 && std::fabs(actual-uncompensated) < .0001f);
+    for (unsigned reject=1; reject<=2; ++reject) {
+        ThermalPoseFixture missing(lidarTime,frameTime,12,0);
+        missing.rejectCall = reject; actual = -999;
+        assert(!sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,lidarTime,
+            ThermalPoseFixture::lookup,&missing) && actual == -999 && missing.calls == reject);
+    }
+    ThermalPoseFixture invalid(lidarTime,frameTime,12,NAN); actual = -999;
+    assert(!sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,lidarTime,
+        ThermalPoseFixture::lookup,&invalid) && actual == -999);
+    actual = -999;
+    assert(!sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,lidarTime,
+        nullptr) && actual == -999);
+    ThermalPoseFixture expired(frameTime+201,frameTime,12,0);
+    assert(!sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,frameTime+201,
+        ThermalPoseFixture::lookup,&expired) && actual == -999 && expired.calls == 0);
+    // If a new image is published while pose history is queried, its pixels
+    // cannot be sampled using the old image's timestamp and head pose.
+    ThermalPoseFixture changed(lidarTime,frameTime,12,0);
+    changed.publishDuringLookup = &sensor;
+    assert(!sensor.tryGetHeadPointTemperature(hit,origin,offset,false,actual,lidarTime,
+        ThermalPoseFixture::lookup,&changed) && actual == -999 && changed.calls == 2);
+    puts("Thermal pose synchronization PASS: both timestamped head poses, eccentric-origin projection, unchanged stationary result, absent/invalid histories rejected, age limit retained, publication race rejected.");
+}
+
 static void validateInitializationFallback() {
     // Healthy boot keeps the fast rate and probes only after setting its clock.
     realFixture(); ThermalSensor healthy;
     assert(healthy.begin() && completeFrame(healthy));
     auto health = healthy.acquisitionHealth();
-    assert(health.i2cHz == 400000 && health.refreshHz == 8 && !health.readErrors);
+    assert(health.i2cHz == 400000 && health.refreshHz == 16 && !health.readErrors);
     assert(Wire.probeClocks == std::vector<uint32_t>{400000});
-    assert((Wire.registers[0x800D] & 0x0380U) == (4U << 7));
+    assert((Wire.registers[0x800D] & 0x0380U) == (5U << 7));
 
     // Realistic fault: ACK succeeds but the primary EEPROM transfer at 400 kHz
     // fails. A fresh 100 kHz calibration read and independent verification must
@@ -478,15 +789,16 @@ static void validateInitializationFallback() {
         ThermalSensor rejected;
         assert(!rejected.begin() && !rejected.updateFrame());
         health = rejected.acquisitionHealth();
-        assert(health.i2cHz == 400000 && health.refreshHz == 8 && !health.readErrors && !health.frameReady);
+        assert(health.i2cHz == 400000 && health.refreshHz == 16 && !health.readErrors && !health.frameReady);
         assert(Wire.probeClocks == std::vector<uint32_t>{400000} && Wire.eepromWrites == 0);
         rejected.health(error, frames, age);
         assert(error == (invalid == 2 ? ThermalAcquisition::InvalidConfiguration : ThermalAcquisition::InvalidCalibration));
         assert(health.rawError == (invalid == 2 ? -2 : ThermalAcquisition::InvalidCalibration));
     }
 
-    // Runtime overruns lower the rate while retaining 400 kHz. Reinitialization
-    // still needs transport fallback even though fastMode is already false.
+    // Runtime overruns maintain 8 complete frames/s (16 subpages/s) while retaining 400 kHz.
+    // Reinitialization keeps that target rate; a later transport fault can still
+    // activate the independent 100 kHz fallback.
     realFixture(); ThermalSensor rateReduced;
     assert(rateReduced.begin());
     Wire.continuousReady = true;
@@ -495,8 +807,16 @@ static void validateInitializationFallback() {
         assert(!rateReduced.updateFrame());
     }
     health = rateReduced.acquisitionHealth();
-    assert(health.refreshHz == 4 && health.i2cHz == 400000 && health.overruns == 3 && !health.readErrors);
-    Wire.continuousReady = false; Wire.failFastEepromRead = true;
+    assert(health.refreshHz == 16 && health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 &&
+        health.i2cHz == 400000 && health.overruns == 3 && !health.readErrors);
+    Wire.continuousReady = false;
+    assert(rateReduced.begin());
+    health = rateReduced.acquisitionHealth();
+    assert(health.refreshHz == 16 && health.requestedFrameRateHz == 8 && health.targetFrameRateHz == 8 &&
+        health.i2cHz == 400000 && health.overruns == 3 && !health.readErrors);
+    assert((Wire.registers[0x800D] & 0x0380U) == (5U << 7));
+    assert(completeFrame(rateReduced));
+    Wire.failFastEepromRead = true;
     assert(rateReduced.begin() && rateReduced.acquisitionHealth().i2cHz == 100000 &&
         rateReduced.acquisitionHealth().refreshHz == 4 && rateReduced.acquisitionHealth().readErrors == 1);
     assert(completeFrame(rateReduced));
@@ -523,11 +843,18 @@ static void validatePhysicalEeprom(const char *path) {
 }
 
 int main(int argc, char **argv) {
+    Preferences::clear();
     validateEepromSummary();
     validateAssembler();
     validateDriverBounds();
+    validateTransferSizes();
+    validateRamReadTiming();
+    validateCooperativeReadHook();
+    validateFrameRatePreferences();
+    validateMeasuredFrameRate();
     validateAutomaticSubpageControl();
     validateSensorPublication();
+    validateThermalPoseSynchronization();
     validateMaskedNormalizationInvariant();
     validatePartialRealEeprom();
     validateInitializationFallback();

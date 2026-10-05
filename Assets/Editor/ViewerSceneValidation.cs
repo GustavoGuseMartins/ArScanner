@@ -42,6 +42,10 @@ namespace ArScanner.EditorTools
                 hud.tcpReceiver.isActiveAndEnabled, "Start/stop and speed controls have no active TCP receiver.");
             Require(hud.pointRenderer != null && hud.pointRenderer == controller.GetComponent<ThermalPointCloudRenderer>(),
                 "Clear/export and orientation controls have no point renderer.");
+            Require(Mathf.Abs(hud.pointRenderer.pointSize - .0125f) < .00001f,
+                "Viewer quads must start at 12.5 mm, twice the previous point diameter.");
+            Require(!hud.pointRenderer.enableSurfaceLod && !hud.pointRenderer.hideBackFacingPoints,
+                "Viewer must start in point-only mode with both sides visible.");
             Require(hud.anchorManager != null && hud.anchorManager == controller.GetComponent<UwbAnchorManager>(),
                 "Scanner placement controls have no spatial manager.");
             Require(hud.simulator != null && hud.simulator == controller.GetComponent<PointCloudSimulator>(),
@@ -82,7 +86,7 @@ namespace ArScanner.EditorTools
 
         private static void CaptureRuntimeException(string message, string stackTrace, LogType type)
         {
-            if (type == LogType.Exception && SessionState.GetBool(RuntimeCheckKey, false))
+            if ((type == LogType.Exception || type == LogType.Error) && SessionState.GetBool(RuntimeCheckKey, false))
                 SessionState.SetString(RuntimeCheckKey + ".Exception", message);
         }
 
@@ -97,6 +101,7 @@ namespace ArScanner.EditorTools
 
         private static void CheckIntegratedControls(ArScannerHUD hud)
         {
+            SurfaceLodAsyncValidation.Run();
             UwbInstantPoseEstimatorValidation.Run();
             float[] calibratedScales = new float[3], calibratedOffsets = new float[3];
             Require(UwbRangeCalibrationProfile.TryFitTwoPoint(.8f,
@@ -112,8 +117,8 @@ namespace ArScanner.EditorTools
                 color=new Color32(235,235,235,255),hasThermal=false};
             var lod = SurfaceLodBuilder.Build(flat,new Vector3(0,0,-2),.8f,2.5f,.16f,.018f,
                 2.5f,out bool[] merged,out int polygons);
-            Require(polygons==1 && lod.triangles.Length>=9 && merged.All(value=>value),
-                "Flat neighboring squares must become one LOD polygon.");
+            Require(polygons==1 && lod.triangles.Length==6 && merged.All(value=>value),
+                "Flat neighboring squares must become one LOD rectangle with two triangles.");
             var triangle = lod.triangles;
             var vertex = lod.vertices;
             Require(Vector3.Cross(vertex[triangle[1]]-vertex[triangle[0]],
@@ -202,10 +207,20 @@ namespace ArScanner.EditorTools
             Require(renderer.targetParticleSystem.GetParticles(particles) == 1 &&
                 Vector3.Distance(particles[0].position, beforeRebase + Vector3.right) < .001f,
                 "Already collected points must follow an AR anchor correction.");
-            var material = renderer.targetParticleSystem.GetComponent<ParticleSystemRenderer>().sharedMaterial;
+            var particleRenderer = renderer.targetParticleSystem.GetComponent<ParticleSystemRenderer>();
+            var material = particleRenderer.sharedMaterial;
             Require(material.shader.name == "ArScanner/PointCloud" &&
                 material.GetFloat("_ZWrite") > .5f && material.renderQueue >= 2000,
                 "Depth-writing point shader must be packaged in the player.");
+            Require(particleRenderer.renderMode == ParticleSystemRenderMode.Billboard &&
+                particleRenderer.alignment == ParticleSystemRenderSpace.View &&
+                material.GetFloat("_Cull") < .5f,
+                "Point quads must face the camera and remain visible from both sides.");
+            var surfaceMaterial = (Material)typeof(ThermalPointCloudRenderer)
+                .GetField("surfaceMaterial", flags).GetValue(renderer);
+            Require(surfaceMaterial != material && surfaceMaterial.GetFloat("_Cull") > 1.5f &&
+                surfaceMaterial.GetFloat("_ZWrite") > .5f,
+                "Measured LOD surfaces must retain their own depth-writing, backface-culled material.");
             var frame = new byte[776];
             Array.Copy(BitConverter.GetBytes(20f),0,frame,0,4);
             Array.Copy(BitConverter.GetBytes(40f),0,frame,4,4);
@@ -225,8 +240,9 @@ namespace ArScanner.EditorTools
                 temperatureC = 30f, surfaceFlags = 0});
             update.Invoke(renderer, null);
             Require(renderer.targetParticleSystem.GetParticles(particles) == 1 &&
-                particles[0].startColor.r != 235 && particles[0].startColor.b != 235,
-                "A LiDAR point with a thermal match must receive a heat color.");
+                particles[0].startColor.r != 235 && particles[0].startColor.b != 235 &&
+                Mathf.Abs(particles[0].startSize - .0125f) < .00001f,
+                "An isolated thermal match must retain its heat color and the 12.5 mm quad size.");
             var hot = ThermalPointCloudRenderer.AbsoluteThermalPalette(35f);
             Require(renderer.activeThermalPointsCount == 1 && hot.r == 255 && hot.g == 0 && hot.b == 0,
                 "Absolute thermal colors must show 35 C in red and count fused points.");
@@ -240,6 +256,17 @@ namespace ArScanner.EditorTools
 
         private static void CheckRuntimeFrame()
         {
+            if (runtimeFrames == 0)
+            {
+                var hud = UnityEngine.Object.FindFirstObjectByType<ArScannerHUD>();
+                if (hud != null)
+                {
+                    // Exercise every expandable section in the shared right scroll during real GUI frames.
+                    foreach (string field in new[] { "showDiagnostics", "showSensorDetails", "showMountingControls", "showExperimentControls" })
+                        typeof(ArScannerHUD).GetField(field, System.Reflection.BindingFlags.Instance |
+                            System.Reflection.BindingFlags.NonPublic).SetValue(hud, true);
+                }
+            }
             if (++runtimeFrames < 60 && EditorApplication.timeSinceStartup < deadline) return;
             EditorApplication.update -= CheckRuntimeFrame;
             SessionState.SetBool(RuntimeCheckKey, false);

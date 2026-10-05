@@ -778,17 +778,17 @@ MonoBehaviour:
   maxPoints: 80000
   voxelGridSize: 0.025
   maxPointsPerFrame: 1200
-  pointSize: 0.00625
+  pointSize: 0.0125
   adaptivePointSizing: 1
   pointOpacity: 1
   showThermalColors: 1
   thermalDisplayMinC: 18
   thermalDisplayMaxC: 40
-  enableSurfaceLod: 1
-  lodNearMeters: 0.8
+  enableSurfaceLod: 0
+  lodNearMeters: 0.45
   lodFarMeters: 2.5
-  lodTileSize: 0.16
-  lodPlaneTolerance: 0.018
+  lodTileSize: 0.24
+  lodPlaneTolerance: 0.038
   lodMaxThermalSpreadC: 2.5
   pointPitchOffset: 0
   pointYawOffset: 200
@@ -1452,7 +1452,7 @@ ParticleSystem:
     startSize:
       serializedVersion: 2
       minMaxState: 0
-      scalar: 0.00625
+      scalar: 0.0125
       minScalar: 1
       maxCurve:
         serializedVersion: 2
